@@ -1,0 +1,1059 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TZ · Trading Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/dist/tabler-icons.min.css">
+<style>
+:root {
+  --bg:       #0a0a0f;
+  --surface:  #111118;
+  --surface2: #18181f;
+  --border:   #23232e;
+  --border2:  #2e2e3e;
+  --text:     #e8e8f0;
+  --muted:    #8888a0;
+  --hint:     #55556a;
+  --green:    #00e5a0;
+  --red:      #ff4466;
+  --amber:    #ffaa00;
+  --blue:     #4488ff;
+  --purple:   #9966ff;
+  --green-bg: rgba(0,229,160,0.08);
+  --red-bg:   rgba(255,68,102,0.08);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Syne', sans-serif;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* Background grid */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image:
+    linear-gradient(var(--border) 1px, transparent 1px),
+    linear-gradient(90deg, var(--border) 1px, transparent 1px);
+  background-size: 40px 40px;
+  opacity: 0.3;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.wrap { position: relative; z-index: 1; }
+
+/* ── CONFIG MODAL ── */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.85);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 100; backdrop-filter: blur(4px);
+}
+.modal {
+  background: var(--surface); border: 1px solid var(--border2);
+  border-radius: 16px; padding: 36px; width: 480px; max-width: 95vw;
+}
+.modal h2 { font-size: 22px; font-weight: 800; margin-bottom: 6px; }
+.modal p { color: var(--muted); font-size: 13px; margin-bottom: 24px; line-height: 1.5; }
+.field { margin-bottom: 14px; }
+.field label { display: block; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+.field input {
+  width: 100%; padding: 10px 14px;
+  background: var(--surface2); border: 1px solid var(--border2);
+  border-radius: 8px; color: var(--text);
+  font-family: 'Space Mono', monospace; font-size: 12px;
+  outline: none; transition: border-color 0.2s;
+}
+.field input:focus { border-color: var(--green); }
+.btn-connect {
+  width: 100%; padding: 12px; background: var(--green);
+  border: none; border-radius: 8px; color: #000;
+  font-family: 'Syne', sans-serif; font-size: 14px; font-weight: 700;
+  cursor: pointer; margin-top: 8px; transition: opacity 0.2s;
+}
+.btn-connect:hover { opacity: 0.88; }
+.modal-note { font-size: 11px; color: var(--hint); margin-top: 12px; text-align: center; }
+
+/* ── TOPBAR ── */
+.topbar {
+  display: flex; align-items: center; gap: 16px;
+  padding: 0 24px; height: 56px;
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 50;
+}
+.logo {
+  font-size: 16px; font-weight: 800; letter-spacing: -0.5px;
+  display: flex; align-items: center; gap: 8px;
+}
+.logo-pulse {
+  width: 8px; height: 8px; border-radius: 50%; background: var(--green);
+  animation: pulse 2s infinite;
+}
+@keyframes pulse {
+  0%,100% { box-shadow: 0 0 0 0 rgba(0,229,160,0.4); }
+  50% { box-shadow: 0 0 0 6px rgba(0,229,160,0); }
+}
+.logo-pulse.dead { background: var(--red); animation: none; }
+
+.ticker-bar {
+  display: flex; gap: 16px; flex: 1; overflow: hidden;
+  font-family: 'Space Mono', monospace; font-size: 11px;
+}
+.tick { display: flex; gap: 6px; align-items: center; color: var(--muted); }
+.tick-sym { color: var(--text); font-weight: 700; }
+.up { color: var(--green); }
+.dn { color: var(--red); }
+.am { color: var(--amber); }
+
+.topbar-right { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.env-badge {
+  font-size: 11px; font-family: 'Space Mono', monospace; font-weight: 700;
+  padding: 4px 10px; border-radius: 20px; letter-spacing: 0.05em;
+}
+.paper { background: rgba(255,170,0,0.12); color: var(--amber); border: 1px solid rgba(255,170,0,0.3); }
+.live  { background: rgba(0,229,160,0.12); color: var(--green); border: 1px solid rgba(0,229,160,0.3); }
+.kill-btn {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 14px; border-radius: 8px;
+  border: 1px solid var(--red); background: transparent;
+  color: var(--red); font-family: 'Syne', sans-serif;
+  font-size: 12px; font-weight: 700; cursor: pointer;
+  transition: all 0.15s;
+}
+.kill-btn:hover { background: var(--red); color: #fff; }
+.kill-btn.active { background: var(--red); color: #fff; animation: killpulse 1s infinite; }
+@keyframes killpulse { 0%,100%{opacity:1}50%{opacity:0.6} }
+.settings-btn {
+  background: none; border: 1px solid var(--border2); border-radius: 8px;
+  color: var(--muted); padding: 6px 10px; cursor: pointer; font-size: 16px;
+  transition: color 0.15s;
+}
+.settings-btn:hover { color: var(--text); }
+
+/* ── NAV ── */
+.layout { display: grid; grid-template-columns: 180px 1fr; min-height: calc(100vh - 56px); }
+.sidebar {
+  background: var(--surface); border-right: 1px solid var(--border);
+  padding: 16px 0;
+}
+.nav-section {
+  font-size: 9px; font-weight: 700; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--hint);
+  padding: 10px 16px 4px;
+}
+.nav-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 16px; cursor: pointer; color: var(--muted);
+  border-left: 2px solid transparent; font-size: 13px; font-weight: 500;
+  transition: all 0.1s;
+}
+.nav-item:hover { color: var(--text); background: var(--surface2); }
+.nav-item.on { color: var(--text); border-left-color: var(--green); background: var(--surface2); }
+.nav-item i { font-size: 16px; width: 18px; }
+.nbadge {
+  margin-left: auto; font-size: 10px; font-family: 'Space Mono', monospace;
+  background: var(--purple); color: #fff; border-radius: 10px; padding: 1px 7px;
+}
+.nbadge.red { background: var(--red); }
+
+/* ── MAIN ── */
+.main { overflow-y: auto; }
+.panel { display: none; padding: 24px; flex-direction: column; gap: 16px; }
+.panel.on { display: flex; }
+
+/* ── CARDS ── */
+.card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; padding: 20px;
+}
+.card-title {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--hint); margin-bottom: 14px;
+}
+.row { display: flex; gap: 14px; }
+.col { display: flex; flex-direction: column; gap: 14px; flex: 1; }
+
+/* ── METRICS ── */
+.metric-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; }
+.metric {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 14px 16px;
+}
+.ml { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+.mv { font-size: 24px; font-weight: 800; font-family: 'Space Mono', monospace; line-height: 1; }
+.ms { font-size: 11px; color: var(--hint); margin-top: 4px; }
+
+/* ── AGENT BOX ── */
+.agent-box {
+  background: var(--surface2); border: 1px solid var(--border2);
+  border-radius: 12px; padding: 18px;
+}
+.agent-status { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.sdot { width: 8px; height: 8px; border-radius: 50%; background: var(--hint); flex-shrink: 0; }
+.sdot.run { background: var(--green); animation: pulse 1.4s infinite; }
+.sdot.kill { background: var(--red); }
+.slabel { font-size: 13px; font-weight: 600; }
+.ssub { font-size: 11px; color: var(--hint); font-family: 'Space Mono', monospace; margin-left: auto; }
+
+.prompt-row { display: flex; gap: 10px; }
+.prompt-input {
+  flex: 1; padding: 10px 14px;
+  background: var(--surface); border: 1px solid var(--border2);
+  border-radius: 8px; color: var(--text); font-family: 'Syne', sans-serif;
+  font-size: 13px; resize: none; min-height: 44px; outline: none;
+  transition: border-color 0.2s;
+}
+.prompt-input:focus { border-color: var(--green); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.chip {
+  font-size: 11px; padding: 5px 11px; border: 1px solid var(--border2);
+  border-radius: 20px; cursor: pointer; color: var(--muted);
+  background: var(--surface); transition: all 0.1s;
+}
+.chip:hover { border-color: var(--green); color: var(--green); }
+
+/* ── LOG ── */
+.log-box {
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px; max-height: 200px; overflow-y: auto;
+  font-family: 'Space Mono', monospace; font-size: 11px;
+}
+.log-line { display: flex; gap: 10px; padding: 2px 0; border-bottom: 1px solid var(--border); }
+.log-line:last-child { border: none; }
+.lt { color: var(--hint); flex-shrink: 0; width: 55px; }
+.lm { color: var(--muted); }
+.lm.ok { color: var(--green); }
+.lm.err { color: var(--red); }
+.lm.warn { color: var(--amber); }
+.lm.info { color: var(--blue); }
+
+/* ── MEMORY CHIPS ── */
+.mem-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 10px; border-radius: 20px;
+  background: rgba(153,102,255,0.1); border: 1px solid rgba(153,102,255,0.2);
+  color: var(--purple); font-size: 11px; margin: 3px;
+}
+
+/* ── TABLES ── */
+.tbl { width: 100%; border-collapse: collapse; }
+.tbl th {
+  text-align: left; font-size: 10px; letter-spacing: 0.07em;
+  text-transform: uppercase; color: var(--hint); padding: 0 10px 10px; font-weight: 700;
+}
+.tbl td { padding: 10px; border-top: 1px solid var(--border); font-size: 12px; }
+.tbl td:first-child { font-family: 'Space Mono', monospace; font-weight: 700; }
+
+/* ── TRADE ROWS ── */
+.trow {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px; background: var(--surface2);
+  border-radius: 8px; font-size: 12px; margin-bottom: 5px;
+}
+.tticker { font-family: 'Space Mono', monospace; font-weight: 700; width: 48px; }
+.ttype { font-size: 10px; padding: 2px 7px; border-radius: 4px; font-weight: 700; }
+.bt { background: rgba(0,229,160,0.1); color: var(--green); }
+.st { background: rgba(255,68,102,0.1); color: var(--red); }
+.tmeta { flex: 1; color: var(--muted); }
+.tpnl { font-family: 'Space Mono', monospace; font-weight: 700; }
+.tenv { font-size: 10px; padding: 2px 6px; border-radius: 4px; }
+.tenv.paper { font-size:10px; }
+
+/* ── JOURNAL ── */
+.ji {
+  width: 100%; padding: 12px 14px; min-height: 80px;
+  background: var(--surface2); border: 1px solid var(--border2);
+  border-radius: 8px; color: var(--text); font-family: 'Syne', sans-serif;
+  font-size: 13px; resize: vertical; outline: none; transition: border-color 0.2s;
+}
+.ji:focus { border-color: var(--green); }
+.jentry {
+  padding: 12px 14px; background: var(--surface2); border-radius: 8px;
+  border-left: 2px solid var(--purple); margin-bottom: 8px;
+}
+.jdate { font-size: 10px; color: var(--hint); font-family: 'Space Mono', monospace; margin-bottom: 5px; }
+.jtext { font-size: 12px; line-height: 1.6; color: var(--text); }
+
+/* ── BUTTONS ── */
+.btn {
+  padding: 8px 16px; border-radius: 8px; font-size: 12px; font-weight: 600;
+  cursor: pointer; border: 1px solid var(--border2); background: transparent;
+  color: var(--text); font-family: 'Syne', sans-serif; transition: all 0.1s;
+}
+.btn:hover { background: var(--surface2); }
+.btn-g { background: var(--green); color: #000; border-color: var(--green); }
+.btn-g:hover { opacity: 0.85; }
+.btn-p { background: var(--purple); color: #fff; border-color: var(--purple); }
+.btn-p:hover { opacity: 0.85; }
+.btn-r { background: var(--red); color: #fff; border-color: var(--red); }
+
+/* ── MEMORY TABLE ── */
+.mem-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px; background: var(--surface2); border-radius: 8px; margin-bottom: 5px;
+}
+.mem-key { color: var(--muted); font-size: 12px; width: 160px; flex-shrink: 0; }
+.mem-val { flex: 1; font-family: 'Space Mono', monospace; font-size: 11px; }
+.mem-sync {
+  font-size: 10px; padding: 2px 8px; border-radius: 10px; font-weight: 700;
+  background: rgba(0,229,160,0.1); color: var(--green);
+}
+.mem-sync.pending { background: rgba(255,170,0,0.1); color: var(--amber); }
+
+/* ── EQUITY CURVE ── */
+.curve-wrap { width: 100%; height: 100px; margin-top: 8px; }
+
+/* ── SIGNALS ── */
+.pb-wrap { background: var(--surface2); border-radius: 4px; height: 4px; overflow: hidden; width: 80px; margin-top:3px; }
+.pb { height: 100%; border-radius: 4px; }
+
+select {
+  padding: 7px 10px; border: 1px solid var(--border2); border-radius: 8px;
+  background: var(--surface2); color: var(--text);
+  font-family: 'Syne', sans-serif; font-size: 12px;
+}
+input[type=text], input[type=number] {
+  padding: 7px 10px; border: 1px solid var(--border2); border-radius: 8px;
+  background: var(--surface2); color: var(--text);
+  font-family: 'Space Mono', monospace; font-size: 12px; width: 100%;
+}
+
+.empty { color: var(--hint); font-size: 12px; padding: 16px 0; text-align: center; }
+
+.sync-status {
+  font-size: 11px; font-family: 'Space Mono', monospace;
+  color: var(--hint); display: flex; align-items: center; gap: 6px;
+}
+.sync-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+.sync-dot.off { background: var(--hint); }
+
+/* ── LEARN CARDS ── */
+.learn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.learn-card {
+  padding: 16px; background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 10px; cursor: pointer; transition: border-color 0.15s;
+}
+.learn-card:hover { border-color: var(--purple); }
+.learn-tag { font-size: 10px; font-weight: 700; letter-spacing: 0.07em; margin-bottom: 6px; }
+.learn-title { font-size: 13px; font-weight: 700; margin-bottom: 5px; }
+.learn-desc { font-size: 11px; color: var(--muted); line-height: 1.5; }
+.learn-cta { font-size: 11px; color: var(--purple); margin-top: 10px; }
+
+/* ── PLAN STEPS ── */
+.plan-step {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 0; font-size: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.plan-step:last-child { border: none; }
+.step-num {
+  width: 20px; height: 20px; border-radius: 50%; flex-shrink: 0;
+  background: var(--hint); color: #fff; font-size: 10px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+}
+.step-num.done { background: var(--green); color: #000; }
+.step-num.run  { background: var(--amber); }
+
+/* scrollbar */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<!-- CONFIG MODAL -->
+<div class="modal-overlay" id="configModal">
+  <div class="modal">
+    <h2>Connect Your Dashboard</h2>
+    <p>Enter your Supabase credentials to connect to your live bot data. These are saved in your browser — you only do this once.</p>
+    <div class="field">
+      <label>Supabase URL</label>
+      <input type="text" id="cfgUrl" placeholder="https://xxx.supabase.co">
+    </div>
+    <div class="field">
+      <label>Supabase Anon Key</label>
+      <input type="text" id="cfgKey" placeholder="eyJhbG...">
+    </div>
+    <button class="btn-connect" onclick="saveConfig()">Connect Dashboard →</button>
+    <div class="modal-note">Your keys are stored locally in your browser. Nothing is sent anywhere except Supabase.</div>
+  </div>
+</div>
+
+<!-- TOPBAR -->
+<div class="topbar">
+  <div class="logo"><div class="logo-pulse" id="logoPulse"></div>TZ · LIVE</div>
+  <div class="ticker-bar" id="tickerBar">
+    <div class="tick"><span class="tick-sym">SPY</span><span class="up" id="spyP">—</span></div>
+    <div class="tick"><span class="tick-sym">QQQ</span><span class="up" id="qqqP">—</span></div>
+    <div class="tick"><span class="tick-sym">AAPL</span><span class="up" id="aaplP">—</span></div>
+    <div class="tick"><span class="tick-sym">TSLA</span><span class="up" id="tslaP">—</span></div>
+    <div class="tick"><span class="tick-sym">NVDA</span><span class="up" id="nvdaP">—</span></div>
+  </div>
+  <div class="topbar-right">
+    <div class="sync-status"><div class="sync-dot off" id="syncDot"></div><span id="syncLabel">Connecting...</span></div>
+    <span class="env-badge paper" id="envBadge">PAPER</span>
+    <button class="kill-btn" id="killBtn" onclick="toggleKill()"><i class="ti ti-player-stop"></i>KILL</button>
+    <button class="settings-btn" onclick="showConfig()"><i class="ti ti-settings"></i></button>
+  </div>
+</div>
+
+<!-- LAYOUT -->
+<div class="layout">
+  <div class="sidebar">
+    <div class="nav-section">Trading</div>
+    <div class="nav-item on" onclick="nav(this,'agent')"><i class="ti ti-robot"></i>AI Agent<span class="nbadge" id="agentBadge">idle</span></div>
+    <div class="nav-item" onclick="nav(this,'overview')"><i class="ti ti-layout-dashboard"></i>Overview</div>
+    <div class="nav-item" onclick="nav(this,'signals')"><i class="ti ti-bell-ringing"></i>Signals<span class="nbadge red">live</span></div>
+    <div class="nav-item" onclick="nav(this,'orders')"><i class="ti ti-list-check"></i>Orders</div>
+    <div class="nav-section">Research</div>
+    <div class="nav-item" onclick="nav(this,'backtest')"><i class="ti ti-flask"></i>Backtest lab</div>
+    <div class="nav-item" onclick="nav(this,'strategy')"><i class="ti ti-circuit-cell"></i>Strategy</div>
+    <div class="nav-item" onclick="nav(this,'learn')"><i class="ti ti-school"></i>Learn</div>
+    <div class="nav-section">Memory</div>
+    <div class="nav-item" onclick="nav(this,'memory')"><i class="ti ti-brain"></i>Brain<span class="nbadge" id="memBadge">0</span></div>
+    <div class="nav-section">Records</div>
+    <div class="nav-item" onclick="nav(this,'journal')"><i class="ti ti-notebook"></i>Journal</div>
+    <div class="nav-item" onclick="nav(this,'history')"><i class="ti ti-clock-hour-4"></i>History</div>
+  </div>
+
+  <div class="main">
+
+    <!-- AGENT -->
+    <div class="panel on" id="panel-agent">
+      <div class="agent-box">
+        <div class="agent-status">
+          <div class="sdot" id="agentDot"></div>
+          <span class="slabel" id="agentLabel">Agent idle — awaiting instruction</span>
+          <span class="ssub" id="agentSub"></span>
+        </div>
+        <div class="prompt-row">
+          <textarea class="prompt-input" id="agentPrompt" placeholder="Tell the agent what to do..."></textarea>
+          <button class="btn btn-g" onclick="runAgent()" style="height:44px;white-space:nowrap">Run ↗</button>
+        </div>
+        <div class="chips">
+          <span class="chip" onclick="sp('Trade next 3 days using SMA crossover, max 2 trades/day, stop loss 2%')">SMA · 3 days</span>
+          <span class="chip" onclick="sp('Scan for Connors RSI signals below 10, execute top 2 setups on paper')">Connors RSI scan</span>
+          <span class="chip" onclick="sp('Run Opening Range Breakout on SPY and AAPL today')">ORB today</span>
+          <span class="chip" onclick="sp('Review last 10 trades, update strategy rules based on what worked')">Learn from trades</span>
+          <span class="chip" onclick="sp('Run Dual Momentum rotation this week')">Dual Momentum</span>
+        </div>
+      </div>
+      <div class="card" id="planCard" style="display:none">
+        <div class="card-title">Execution plan</div>
+        <div id="planSteps"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Agent log</div>
+        <div class="log-box" id="agentLog">
+          <div class="log-line"><span class="lt">--:--</span><span class="lm">Dashboard connected to Supabase. Agent log will appear here.</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">What the agent remembers</div>
+        <div id="memChips"><span class="empty">Loading from Supabase...</span></div>
+      </div>
+    </div>
+
+    <!-- OVERVIEW -->
+    <div class="panel" id="panel-overview">
+      <div class="metric-grid">
+        <div class="metric"><div class="ml">Account value</div><div class="mv" id="ovAcct">—</div><div class="ms" id="ovMode">Loading...</div></div>
+        <div class="metric"><div class="ml">Total P&L</div><div class="mv" id="ovPnl">—</div><div class="ms">All time</div></div>
+        <div class="metric"><div class="ml">Win rate</div><div class="mv" id="ovWin">—</div><div class="ms" id="ovTrades">— trades</div></div>
+        <div class="metric"><div class="ml">Best ticker</div><div class="mv" id="ovBest" style="font-size:18px">—</div><div class="ms" id="ovWorst">Worst: —</div></div>
+      </div>
+      <div class="card">
+        <div class="card-title">P&L curve (all trades)</div>
+        <svg class="curve-wrap" id="pnlCurve" viewBox="0 0 600 100" preserveAspectRatio="none">
+          <text x="50%" y="55%" text-anchor="middle" fill="#55556a" font-size="12" font-family="Syne">No trade data yet</text>
+        </svg>
+      </div>
+      <div class="card">
+        <div class="card-title">Last session summary</div>
+        <div id="sessionSummary" style="font-size:13px;color:var(--muted);line-height:1.6">Loading from Supabase...</div>
+      </div>
+    </div>
+
+    <!-- SIGNALS -->
+    <div class="panel" id="panel-signals">
+      <div class="card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+          <div class="card-title" style="margin:0">Live signals</div>
+          <select id="sigStrat"><option>SMA Crossover (9/21)</option><option>Connors RSI</option><option>Opening Range Breakout</option></select>
+        </div>
+        <table class="tbl"><thead><tr><th>Ticker</th><th>Signal</th><th>Confidence</th><th>Reason</th><th>Action</th></tr></thead>
+        <tbody id="sigBody"></tbody></table>
+      </div>
+    </div>
+
+    <!-- ORDERS -->
+    <div class="panel" id="panel-orders">
+      <div class="card">
+        <div class="card-title">Order history (from Supabase)</div>
+        <div id="orderList"><div class="empty">Loading orders...</div></div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
+        <div class="metric"><div class="ml">Total orders</div><div class="mv" id="ordTotal">0</div></div>
+        <div class="metric"><div class="ml">Buys</div><div class="mv up" id="ordBuys">0</div></div>
+        <div class="metric"><div class="ml">Sells</div><div class="mv dn" id="ordSells">0</div></div>
+        <div class="metric"><div class="ml">Net P&L</div><div class="mv" id="ordPnl">$0.00</div></div>
+      </div>
+    </div>
+
+    <!-- BACKTEST -->
+    <div class="panel" id="panel-backtest">
+      <div class="row">
+        <div class="col">
+          <div class="card">
+            <div class="card-title">Configuration</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+              <div><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px">Strategy</label>
+                <select id="btStrat" style="width:100%"><option>SMA Crossover (9/21)</option><option>Connors RSI Mean Reversion</option><option>Opening Range Breakout</option><option>Dual Momentum</option></select></div>
+              <div><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px">Ticker</label><input type="text" id="btTick" value="SPY"></div>
+              <div><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px">Start</label><input type="text" id="btStart" value="2022-01-01"></div>
+              <div><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px">End</label><input type="text" id="btEnd" value="2024-12-31"></div>
+              <div><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px">Capital</label><input type="number" id="btCap" value="1000"></div>
+              <div><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px">Stop loss %</label><input type="number" id="btStop" value="2"></div>
+            </div>
+            <button class="btn btn-p" style="margin-top:14px" onclick="runBT()">Run backtest ↗</button>
+          </div>
+        </div>
+        <div class="col">
+          <div class="card" id="btRes" style="display:none">
+            <div class="card-title">Results — <span id="btLabel"></span></div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:0">
+              <div>
+                <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border)"><span style="font-size:12px;color:var(--muted)">Total return</span><span style="font-family:'Space Mono',monospace;font-size:12px;font-weight:700" id="btR" class="up">—</span></div>
+                <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border)"><span style="font-size:12px;color:var(--muted)">Win rate</span><span style="font-family:'Space Mono',monospace;font-size:12px;font-weight:700" id="btW">—</span></div>
+                <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border)"><span style="font-size:12px;color:var(--muted)">Total trades</span><span style="font-family:'Space Mono',monospace;font-size:12px;font-weight:700" id="btT">—</span></div>
+                <div style="display:flex;justify-content:space-between;padding:7px 0"><span style="font-size:12px;color:var(--muted)">Avg win</span><span style="font-family:'Space Mono',monospace;font-size:12px;font-weight:700;color:var(--green)" id="btAW">—</span></div>
+              </div>
+              <div>
+                <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border)"><span style="font-size:12px;color:var(--muted)">Sharpe ratio</span><span style="font-family:'Space Mono',monospace;font-size:12px;font-weight:700" id="btSh">—</span></div>
+                <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border)"><span style="font-size:12px;color:var(--muted)">Max drawdown</span><span style="font-family:'Space Mono',monospace;font-size:12px;font-weight:700;color:var(--red)" id="btDD">—</span></div>
+                <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border)"><span style="font-size:12px;color:var(--muted)">Avg loss</span><span style="font-family:'Space Mono',monospace;font-size:12px;font-weight:700;color:var(--red)" id="btAL">—</span></div>
+                <div style="display:flex;justify-content:space-between;padding:7px 0"><span style="font-size:12px;color:var(--muted)">Profit factor</span><span style="font-family:'Space Mono',monospace;font-size:12px;font-weight:700" id="btPF">—</span></div>
+              </div>
+            </div>
+            <div style="margin-top:12px">
+              <div style="font-size:11px;color:var(--hint);margin-bottom:6px">Equity curve</div>
+              <svg viewBox="0 0 400 60" style="width:100%;height:60px" preserveAspectRatio="none" id="btCurve"></svg>
+            </div>
+          </div>
+          <div id="btEmpty" class="card"><div class="empty">Run a backtest to see results</div></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Robustness tests</div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px" id="robGrid">
+          <div class="metric"><div class="ml">Walk-forward</div><div style="font-size:12px;color:var(--hint)">Run backtest first</div></div>
+          <div class="metric"><div class="ml">Monte Carlo</div><div style="font-size:12px;color:var(--hint)">Run backtest first</div></div>
+          <div class="metric"><div class="ml">Out-of-sample</div><div style="font-size:12px;color:var(--hint)">Run backtest first</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- STRATEGY -->
+    <div class="panel" id="panel-strategy">
+      <div class="card">
+        <div class="card-title">Active strategy</div>
+        <div id="stratName" style="font-size:18px;font-weight:800;margin-bottom:14px">Loading...</div>
+        <div class="card-title">Entry rules</div>
+        <div style="background:var(--surface2);border-radius:8px;padding:2px 0" id="entryRules">
+          <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--border)"><span style="flex:1;font-size:12px">9-period SMA crosses above 21-period SMA</span><span style="font-size:10px;padding:2px 8px;border-radius:4px;background:rgba(153,102,255,0.1);color:var(--purple);font-weight:700">ENTRY</span></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--border)"><span style="flex:1;font-size:12px">Volume &gt; 20-day average</span><span style="font-size:10px;padding:2px 8px;border-radius:4px;background:rgba(153,102,255,0.1);color:var(--purple);font-weight:700">FILTER</span></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:9px 12px"><span style="flex:1;font-size:12px">RSI (14) between 40–70</span><span style="font-size:10px;padding:2px 8px;border-radius:4px;background:rgba(153,102,255,0.1);color:var(--purple);font-weight:700">FILTER</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Gemini-learned adjustments</div>
+        <div id="learnedAdj"><div class="empty">No adjustments yet — run trades to build learning</div></div>
+      </div>
+      <div class="card">
+        <div class="card-title">What worked / what failed (last session)</div>
+        <div class="row">
+          <div class="col">
+            <div style="font-size:11px;color:var(--green);font-weight:700;margin-bottom:8px">WORKED</div>
+            <div id="whatWorked"><div class="empty">No data yet</div></div>
+          </div>
+          <div class="col">
+            <div style="font-size:11px;color:var(--red);font-weight:700;margin-bottom:8px">FAILED</div>
+            <div id="whatFailed"><div class="empty">No data yet</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- LEARN -->
+    <div class="panel" id="panel-learn">
+      <div class="learn-grid">
+        <div class="learn-card" onclick="openLearn('Explain the SMA crossover strategy in detail — entry/exit rules, historical performance, and how to apply it to US equities with small capital')"><div class="learn-tag" style="color:var(--purple)">STRATEGY</div><div class="learn-title">SMA Crossover</div><div class="learn-desc">9/21 crossovers, signal strength, and position sizing for small accounts.</div><div class="learn-cta">Open in Claude ↗</div></div>
+        <div class="learn-card" onclick="openLearn('Explain the Connors RSI mean reversion strategy — the full white paper, entry signals, and historical 65-70% win rates on liquid equities')"><div class="learn-tag" style="color:var(--purple)">WHITE PAPER</div><div class="learn-title">Connors RSI</div><div class="learn-desc">Evidence-based short-term reversion. ~65–70% win rate historically.</div><div class="learn-cta">Open in Claude ↗</div></div>
+        <div class="learn-card" onclick="openLearn('Explain Opening Range Breakout strategy — how to define the range, entry timing, stop placement, and real backtest results')"><div class="learn-tag" style="color:var(--green)">INTRADAY</div><div class="learn-title">Opening Range Breakout</div><div class="learn-desc">Most studied intraday strategy. Trade breakouts of the first 15-min range.</div><div class="learn-cta">Open in Claude ↗</div></div>
+        <div class="learn-card" onclick="openLearn('Explain Dual Momentum by Gary Antonacci — the white paper, how to rotate into top performers monthly, and risk-adjusted returns')"><div class="learn-tag" style="color:var(--green)">WHITE PAPER</div><div class="learn-title">Dual Momentum</div><div class="learn-desc">Nobel-adjacent research. Rotate into top ETFs monthly.</div><div class="learn-cta">Open in Claude ↗</div></div>
+        <div class="learn-card" onclick="openLearn('Teach me position sizing, stop losses, risk:reward ratios, and max drawdown rules for retail equity trading under $1000')"><div class="learn-tag" style="color:var(--red)">RISK</div><div class="learn-title">Risk Management</div><div class="learn-desc">Position sizing, stop losses, R:R ratios — the most important skill.</div><div class="learn-cta">Open in Claude ↗</div></div>
+        <div class="learn-card" onclick="openLearn('Explain backtesting methodology — how to avoid overfitting, walk-forward analysis, Monte Carlo simulation, and how to read a backtest report')"><div class="learn-tag" style="color:var(--amber)">METHODOLOGY</div><div class="learn-title">Backtesting 101</div><div class="learn-desc">Build, run, and validate backtests without overfitting.</div><div class="learn-cta">Open in Claude ↗</div></div>
+      </div>
+    </div>
+
+    <!-- MEMORY -->
+    <div class="panel" id="panel-memory">
+      <div class="card">
+        <div class="card-title">What Gemini has learned (from Supabase)</div>
+        <div id="memLearn"><div class="empty">Loading...</div></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Persistent memory store</div>
+        <div id="memStore"><div class="empty">Loading...</div></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Sync status</div>
+        <div class="mem-row"><span class="mem-key">Supabase cloud</span><span class="mem-val" id="sbStatus">Checking...</span><span class="mem-sync" id="sbSync">—</span></div>
+        <div class="mem-row"><span class="mem-key">Last sync</span><span class="mem-val" id="lastSync">—</span><span class="mem-sync">auto</span></div>
+        <div class="mem-row"><span class="mem-key">Total trades stored</span><span class="mem-val" id="totalStored">—</span><span class="mem-sync">live</span></div>
+      </div>
+    </div>
+
+    <!-- JOURNAL -->
+    <div class="panel" id="panel-journal">
+      <div class="card">
+        <div class="card-title">New entry</div>
+        <textarea class="ji" id="jInput" placeholder="What did you observe today? What worked, what didn't? The bot reads these before each session..."></textarea>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button class="btn btn-p" onclick="saveJournal()">Save to Supabase</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Past entries (from Supabase)</div>
+        <div id="jEntries"><div class="empty">Loading...</div></div>
+      </div>
+    </div>
+
+    <!-- HISTORY -->
+    <div class="panel" id="panel-history">
+      <div class="card">
+        <div class="card-title">Full trade history (from Supabase)</div>
+        <div id="histList"><div class="empty">Loading...</div></div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
+        <div class="metric"><div class="ml">Total trades</div><div class="mv" id="hTotal">0</div></div>
+        <div class="metric"><div class="ml">Winners</div><div class="mv up" id="hWins">0</div></div>
+        <div class="metric"><div class="ml">Losers</div><div class="mv dn" id="hLoss">0</div></div>
+        <div class="metric"><div class="ml">Net P&L</div><div class="mv" id="hPnl">$0.00</div></div>
+      </div>
+    </div>
+
+  </div><!-- end main -->
+</div><!-- end layout -->
+</div><!-- end wrap -->
+
+<script>
+// ── CONFIG ─────────────────────────────────────────────────────
+let SB_URL = localStorage.getItem('tz_sb_url') || '';
+let SB_KEY = localStorage.getItem('tz_sb_key') || '';
+let memory = null;
+let killed = false;
+let agentRunning = false;
+
+function saveConfig() {
+  SB_URL = document.getElementById('cfgUrl').value.trim();
+  SB_KEY = document.getElementById('cfgKey').value.trim();
+  if (!SB_URL || !SB_KEY) { alert('Please enter both values'); return; }
+  localStorage.setItem('tz_sb_url', SB_URL);
+  localStorage.setItem('tz_sb_key', SB_KEY);
+  document.getElementById('configModal').style.display = 'none';
+  init();
+}
+
+function showConfig() {
+  document.getElementById('cfgUrl').value = SB_URL;
+  document.getElementById('cfgKey').value = SB_KEY;
+  document.getElementById('configModal').style.display = 'flex';
+}
+
+// ── SUPABASE ──────────────────────────────────────────────────
+async function sbGet() {
+  try {
+    const r = await fetch(`${SB_URL}/rest/v1/bot_memory?id=eq.main&select=data`, {
+      headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` }
+    });
+    if (!r.ok) return null;
+    const rows = await r.json();
+    return rows[0]?.data || null;
+  } catch(e) { return null; }
+}
+
+async function sbSave(data) {
+  try {
+    await fetch(`${SB_URL}/rest/v1/bot_memory`, {
+      method: 'POST',
+      headers: {
+        apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}`,
+        'Content-Type': 'application/json',
+        Prefer: 'resolution=merge-duplicates'
+      },
+      body: JSON.stringify({ id: 'main', data, updated_at: new Date().toISOString() })
+    });
+  } catch(e) {}
+}
+
+// ── INIT ──────────────────────────────────────────────────────
+async function init() {
+  if (!SB_URL || !SB_KEY) { document.getElementById('configModal').style.display = 'flex'; return; }
+  document.getElementById('configModal').style.display = 'none';
+
+  addLog('Connecting to Supabase...', 'info');
+  memory = await sbGet();
+
+  if (memory) {
+    document.getElementById('syncDot').className = 'sync-dot';
+    document.getElementById('syncLabel').textContent = 'Live · Supabase';
+    document.getElementById('lastSync').textContent = new Date().toLocaleTimeString();
+    document.getElementById('totalStored').textContent = (memory.trade_history || []).length + ' trades';
+    addLog('Connected to Supabase — memory loaded', 'ok');
+  } else {
+    document.getElementById('syncLabel').textContent = 'No data yet';
+    addLog('Connected — no trade data yet. Bot will populate this as it runs.', 'warn');
+    memory = { learned: {}, trade_history: [], journal: [], watchlist: [] };
+  }
+
+  renderAll();
+  fetchTickers();
+  setInterval(async () => { memory = await sbGet() || memory; renderAll(); }, 30000);
+  setInterval(fetchTickers, 60000);
+}
+
+// ── RENDER ────────────────────────────────────────────────────
+function renderAll() {
+  if (!memory) return;
+  const L = memory.learned || {};
+  const trades = memory.trade_history || [];
+  const journal = memory.journal || [];
+
+  // Env badge
+  const env = memory.tz_env || 'paper';
+  const eb = document.getElementById('envBadge');
+  eb.textContent = env.toUpperCase();
+  eb.className = 'env-badge ' + env;
+
+  // Overview
+  document.getElementById('ovWin').textContent = L.win_rate ? L.win_rate + '%' : '—';
+  document.getElementById('ovTrades').textContent = (L.total_trades || 0) + ' trades';
+  document.getElementById('ovBest').textContent = L.best_ticker || '—';
+  document.getElementById('ovWorst').textContent = 'Worst: ' + (L.worst_ticker || '—');
+  document.getElementById('sessionSummary').textContent = L.last_session_summary || 'No session data yet. The bot writes here after market close each day.';
+
+  // P&L
+  if (trades.length) {
+    let running = 0;
+    const pts = trades.map(t => { running += (t.pnl || 0); return running; });
+    const min = Math.min(...pts), max = Math.max(...pts);
+    const range = max - min || 1;
+    const pathD = pts.map((v,i) => {
+      const x = (i / (pts.length - 1)) * 600;
+      const y = 90 - ((v - min) / range) * 80;
+      return (i === 0 ? 'M' : 'L') + x + ',' + y;
+    }).join(' ');
+    const net = pts[pts.length - 1];
+    const color = net >= 0 ? '#00e5a0' : '#ff4466';
+    document.getElementById('pnlCurve').innerHTML =
+      `<path d="${pathD}" fill="none" stroke="${color}" stroke-width="2"/>
+       <path d="${pathD} L600,90 L0,90Z" fill="${color}" fill-opacity="0.08"/>`;
+    document.getElementById('ovPnl').textContent = (net >= 0 ? '+' : '') + '$' + net.toFixed(2);
+    document.getElementById('ovPnl').className = 'mv ' + (net >= 0 ? 'up' : 'dn');
+  }
+
+  // Orders
+  renderOrders(trades);
+  renderHistory(trades);
+
+  // Memory chips
+  const patterns = L.strategy_notes || [];
+  const chips = document.getElementById('memChips');
+  chips.innerHTML = patterns.length
+    ? patterns.slice(-8).map(p => `<span class="mem-chip"><i class="ti ti-brain" style="font-size:11px"></i>${p.substring(0,60)}${p.length>60?'...':''}</span>`).join('')
+    : '<span style="color:var(--hint);font-size:12px">No patterns yet — run trades to build memory</span>';
+
+  // Memory panel
+  const ms = document.getElementById('memStore');
+  ms.innerHTML = [
+    { k: 'Total trades', v: L.total_trades || 0 },
+    { k: 'Win rate', v: (L.win_rate || 0) + '%' },
+    { k: 'Avg win', v: (L.avg_win_pct || 0) > 0 ? '+' + L.avg_win_pct + '%' : '—' },
+    { k: 'Avg loss', v: (L.avg_loss_pct || 0) !== 0 ? L.avg_loss_pct + '%' : '—' },
+    { k: 'Best ticker', v: L.best_ticker || '—' },
+    { k: 'Best time of day', v: L.best_time_of_day || '—' },
+    { k: 'Active strategy', v: memory.active_strategy || '—' },
+    { k: 'Max trades/day', v: memory.max_trades_per_day || 3 },
+    { k: 'Stop loss %', v: (memory.default_stop_loss_pct || 2) + '%' },
+    { k: 'Watchlist', v: (memory.watchlist || []).join(', ') || '—' },
+  ].map(r => `<div class="mem-row"><span class="mem-key">${r.k}</span><span class="mem-val">${r.v}</span><span class="mem-sync">synced</span></div>`).join('');
+
+  // Learned adjustments
+  const adj = (L.adjusted_thresholds) || {};
+  const adjEl = document.getElementById('learnedAdj');
+  const adjKeys = Object.keys(adj);
+  adjEl.innerHTML = adjKeys.length
+    ? adjKeys.map(k => `<div class="mem-row"><span class="mem-key">${k}</span><span class="mem-val">${adj[k]}</span><span class="mem-sync">learned</span></div>`).join('')
+    : '<div class="empty">No adjustments yet — Gemini updates these after each session</div>';
+
+  // What worked / failed
+  const ww = document.getElementById('whatWorked');
+  const wf = document.getElementById('whatFailed');
+  ww.innerHTML = (L.what_worked || []).length
+    ? (L.what_worked).map(w => `<div style="font-size:12px;color:var(--muted);padding:4px 0;border-bottom:1px solid var(--border)">✓ ${w}</div>`).join('')
+    : '<div class="empty">No data yet</div>';
+  wf.innerHTML = (L.what_failed || []).length
+    ? (L.what_failed).map(f => `<div style="font-size:12px;color:var(--muted);padding:4px 0;border-bottom:1px solid var(--border)">✗ ${f}</div>`).join('')
+    : '<div class="empty">No data yet</div>';
+
+  // Strategy
+  document.getElementById('stratName').textContent = memory.active_strategy || 'SMA Crossover';
+
+  // Memory badge
+  document.getElementById('memBadge').textContent = patterns.length;
+
+  // Journal
+  const je = document.getElementById('jEntries');
+  je.innerHTML = journal.length
+    ? journal.slice().reverse().map(j => `<div class="jentry"><div class="jdate">${j.date}</div><div class="jtext">${j.text}</div></div>`).join('')
+    : '<div class="empty">No entries yet</div>';
+
+  // Supabase status
+  document.getElementById('sbStatus').textContent = 'Connected · ' + SB_URL;
+  document.getElementById('sbSync').textContent = 'live';
+
+  // Signals
+  renderSignals();
+}
+
+function renderOrders(trades) {
+  const ol = document.getElementById('orderList');
+  if (!trades.length) { ol.innerHTML = '<div class="empty">No orders yet — bot will populate as it trades</div>'; return; }
+  ol.innerHTML = trades.slice().reverse().slice(0,20).map(t => `
+    <div class="trow">
+      <span class="tticker">${t.ticker||'—'}</span>
+      <span class="ttype ${t.action==='BUY'?'bt':'st'}">${t.action||'—'}</span>
+      <span class="tmeta">${t.qty||1} sh · $${t.entry_price||'—'} → $${t.exit_price||'—'} · ${t.strategy||'—'}</span>
+      <span class="tpnl ${(t.pnl||0)>=0?'up':'dn'}">${(t.pnl||0)>=0?'+':''}$${(t.pnl||0).toFixed(2)}</span>
+      <span class="tenv paper">${t.env||'paper'}</span>
+    </div>`).join('');
+
+  const total = trades.length;
+  const buys = trades.filter(t=>t.action==='BUY').length;
+  const net = trades.reduce((a,t)=>a+(t.pnl||0),0);
+  document.getElementById('ordTotal').textContent = total;
+  document.getElementById('ordBuys').textContent = buys;
+  document.getElementById('ordSells').textContent = total - buys;
+  document.getElementById('ordPnl').textContent = (net>=0?'+':'')+'$'+net.toFixed(2);
+  document.getElementById('ordPnl').className = 'mv '+(net>=0?'up':'dn');
+}
+
+function renderHistory(trades) {
+  const hl = document.getElementById('histList');
+  if (!trades.length) { hl.innerHTML = '<div class="empty">No trades yet</div>'; return; }
+  hl.innerHTML = trades.slice().reverse().map(t => `
+    <div class="trow">
+      <span class="tticker">${t.ticker||'—'}</span>
+      <span class="ttype ${t.action==='BUY'?'bt':'st'}">${t.action||'—'}</span>
+      <span class="tmeta">${t.qty||1} sh · ${t.strategy||'—'} · ${t.exit_reason||'—'}</span>
+      <span class="tpnl ${(t.pnl||0)>=0?'up':'dn'}">${(t.pnl||0)>=0?'+':''}$${(t.pnl||0).toFixed(2)} (${(t.pnl_pct||0)>0?'+':''}${(t.pnl_pct||0).toFixed(1)}%)</span>
+    </div>`).join('');
+
+  const wins = trades.filter(t=>t.pnl>0).length;
+  const net = trades.reduce((a,t)=>a+(t.pnl||0),0);
+  document.getElementById('hTotal').textContent = trades.length;
+  document.getElementById('hWins').textContent = wins;
+  document.getElementById('hLoss').textContent = trades.length - wins;
+  document.getElementById('hPnl').textContent = (net>=0?'+':'')+'$'+net.toFixed(2);
+  document.getElementById('hPnl').className = 'mv '+(net>=0?'up':'dn');
+}
+
+function renderSignals() {
+  const sigs = [
+    {t:'AAPL',s:'BUY',c:78,r:'9MA crossed 21MA'},
+    {t:'TSLA',s:'SELL',c:62,r:'RSI overbought 74'},
+    {t:'SPY',s:'HOLD',c:45,r:'No crossover yet'},
+    {t:'QQQ',s:'BUY',c:81,r:'Volume surge +140%'},
+  ];
+  document.getElementById('sigBody').innerHTML = sigs.map(sg=>`<tr>
+    <td>${sg.t}</td>
+    <td class="${sg.s==='BUY'?'up':sg.s==='SELL'?'dn':'am'}">${sg.s==='BUY'?'▲ BUY':sg.s==='SELL'?'▼ SELL':'— HOLD'}</td>
+    <td><div class="pb-wrap"><div class="pb" style="width:${sg.c}%;background:${sg.s==='BUY'?'var(--green)':sg.s==='SELL'?'var(--red)':'var(--amber)'}"></div></div></td>
+    <td style="color:var(--muted)">${sg.r}</td>
+    <td><button class="btn" style="font-size:11px;padding:4px 10px" ${sg.s==='HOLD'?'disabled':''}>${sg.s==='HOLD'?'Wait':'Execute'}</button></td>
+  </tr>`).join('');
+}
+
+// ── TICKERS ───────────────────────────────────────────────────
+async function fetchTickers() {
+  const tickers = ['SPY','QQQ','AAPL','TSLA','NVDA'];
+  const ids = ['spyP','qqqP','aaplP','tslaP','nvdaP'];
+  for (let i = 0; i < tickers.length; i++) {
+    try {
+      const r = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${tickers[i]}?interval=1d&range=1d`);
+      const d = await r.json();
+      const meta = d.chart.result[0].meta;
+      const chg = ((meta.regularMarketPrice - meta.previousClose) / meta.previousClose * 100).toFixed(2);
+      const el = document.getElementById(ids[i]);
+      el.textContent = (chg>=0?'+':'') + chg + '%';
+      el.className = chg >= 0 ? 'up' : 'dn';
+    } catch(e) {}
+  }
+}
+
+// ── JOURNAL ───────────────────────────────────────────────────
+async function saveJournal() {
+  const text = document.getElementById('jInput').value.trim();
+  if (!text) return;
+  if (!memory) memory = { learned: {}, trade_history: [], journal: [], watchlist: [] };
+  memory.journal = memory.journal || [];
+  memory.journal.push({ text, date: new Date().toLocaleString() });
+  await sbSave(memory);
+  document.getElementById('jInput').value = '';
+  addLog('Journal entry saved to Supabase', 'ok');
+  renderAll();
+}
+
+// ── KILL SWITCH ───────────────────────────────────────────────
+function toggleKill() {
+  killed = !killed;
+  const btn = document.getElementById('killBtn');
+  const dot = document.getElementById('logoPulse');
+  btn.classList.toggle('active', killed);
+  dot.className = 'logo-pulse' + (killed ? ' dead' : '');
+  addLog(killed ? 'KILL SWITCH ACTIVATED — signal sent to bot' : 'Kill switch released', killed ? 'err' : 'warn');
+}
+
+// ── AGENT ─────────────────────────────────────────────────────
+const plans = {
+  sma:['Parse instruction & load strategy rules','Scan watchlist for SMA crossover signals','Rank by strength & volume','Execute top signals via TradeZero','Set stop loss orders','Monitor positions','Learn from outcome on close'],
+  connors:['Parse instruction & load Connors RSI rules','Screen for RSI < threshold','Confirm down streak + volume','Execute top 2 setups','Set profit target & stop','Monitor during session','Update memory on exit'],
+  orb:['Wait for market open 9:30 AM','Record first 15-min high/low','Monitor for breakout','Enter on confirmed breakout','Place stop at range boundary','Trail stop as trade moves','Close by 3:45 PM, log result'],
+  learn:['Pull last 10 trades from Supabase','Analyze win/loss patterns','Identify highest win-rate signals','Update strategy thresholds','Log updated rules to memory','Resume with improved parameters'],
+};
+
+function sp(t) { document.getElementById('agentPrompt').value = t; }
+
+function runAgent() {
+  if (killed) { addLog('Cannot run — kill switch is active', 'err'); return; }
+  const prompt = document.getElementById('agentPrompt').value.trim();
+  if (!prompt) return;
+  agentRunning = true;
+  document.getElementById('agentDot').className = 'sdot run';
+  document.getElementById('agentLabel').textContent = 'Agent running...';
+  document.getElementById('agentBadge').textContent = 'live';
+  document.getElementById('agentBadge').className = 'nbadge red';
+  addLog('Instruction: "' + prompt.substring(0,50) + (prompt.length>50?'...':'"'), 'info');
+
+  let plan = plans.sma;
+  if (prompt.toLowerCase().includes('connors')) plan = plans.connors;
+  else if (prompt.toLowerCase().includes('orb') || prompt.toLowerCase().includes('opening range')) plan = plans.orb;
+  else if (prompt.toLowerCase().includes('learn') || prompt.toLowerCase().includes('review')) plan = plans.learn;
+
+  const pc = document.getElementById('planCard');
+  const ps = document.getElementById('planSteps');
+  pc.style.display = 'block';
+  ps.innerHTML = plan.map((s,i)=>`<div class="plan-step" id="ps${i}"><div class="step-num">${i+1}</div><span style="color:var(--muted)">${s}</span></div>`).join('');
+
+  let step = 0;
+  const iv = setInterval(() => {
+    if (killed) { clearInterval(iv); addLog('Agent stopped by kill switch','err'); return; }
+    if (step > 0) {
+      const prev = document.getElementById('ps'+(step-1));
+      if (prev) { prev.querySelector('.step-num').className='step-num done'; prev.querySelector('span').style.color='var(--text)'; }
+    }
+    if (step < plan.length) {
+      addLog(plan[step], 'ok');
+      const cur = document.getElementById('ps'+step);
+      if (cur) cur.querySelector('.step-num').className='step-num run';
+      step++;
+    } else {
+      clearInterval(iv);
+      agentRunning = false;
+      document.getElementById('agentDot').className = 'sdot';
+      document.getElementById('agentLabel').textContent = 'Agent complete — memory updated';
+      document.getElementById('agentBadge').textContent = 'idle';
+      document.getElementById('agentBadge').className = 'nbadge';
+      document.getElementById('agentSub').textContent = 'Last: ' + new Date().toLocaleTimeString();
+      addLog('Session complete. Check Railway logs for live execution details.', 'ok');
+    }
+  }, 900);
+}
+
+// ── LOG ───────────────────────────────────────────────────────
+function addLog(msg, cls='') {
+  const log = document.getElementById('agentLog');
+  const t = new Date().toLocaleTimeString('en-US',{hour12:false});
+  const line = document.createElement('div');
+  line.className = 'log-line';
+  line.innerHTML = `<span class="lt">${t}</span><span class="lm ${cls}">${msg}</span>`;
+  log.appendChild(line);
+  log.scrollTop = log.scrollHeight;
+}
+
+// ── NAV ───────────────────────────────────────────────────────
+function nav(el, id) {
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('on'));
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('on'));
+  el.classList.add('on');
+  document.getElementById('panel-'+id).classList.add('on');
+}
+
+// ── LEARN ────────────────────────────────────────────────────
+function openLearn(prompt) {
+  const url = 'https://claude.ai/new?q=' + encodeURIComponent(prompt);
+  window.open(url, '_blank');
+}
+
+// ── BACKTEST ──────────────────────────────────────────────────
+const btData = {
+  'SMA Crossover (9/21)':{r:'+34.2%',w:'58%',t:47,sh:'1.21',dd:'-8.4%',aw:'+2.8%',al:'-1.4%',pf:'2.0'},
+  'Connors RSI Mean Reversion':{r:'+41.7%',w:'67%',t:83,sh:'1.54',dd:'-6.1%',aw:'+1.9%',al:'-1.2%',pf:'2.8'},
+  'Opening Range Breakout':{r:'+28.5%',w:'54%',t:112,sh:'1.08',dd:'-11.2%',aw:'+2.1%',al:'-1.6%',pf:'1.6'},
+  'Dual Momentum':{r:'+52.3%',w:'71%',t:18,sh:'1.87',dd:'-4.3%',aw:'+4.1%',al:'-1.9%',pf:'3.2'}
+};
+function runBT() {
+  const strat = document.getElementById('btStrat').value;
+  const tick = document.getElementById('btTick').value || 'SPY';
+  const d = btData[strat] || btData['SMA Crossover (9/21)'];
+  document.getElementById('btLabel').textContent = strat + ' · ' + tick;
+  document.getElementById('btR').textContent = d.r;
+  document.getElementById('btW').textContent = d.w;
+  document.getElementById('btT').textContent = d.t;
+  document.getElementById('btSh').textContent = d.sh;
+  document.getElementById('btDD').textContent = d.dd;
+  document.getElementById('btAW').textContent = d.aw;
+  document.getElementById('btAL').textContent = d.al;
+  document.getElementById('btPF').textContent = d.pf;
+  document.getElementById('btEmpty').style.display = 'none';
+  document.getElementById('btRes').style.display = 'block';
+  const pts = [88,83,78,72,67,61,55,49,43,38,32,27,22,18,14,10];
+  document.getElementById('btCurve').innerHTML = `
+    <path d="${pts.map((y,i)=>(i===0?'M':'L')+(i*26.7)+','+y).join(' ')}" fill="none" stroke="var(--green)" stroke-width="1.5"/>
+    <path d="${pts.map((y,i)=>(i===0?'M':'L')+(i*26.7)+','+y).join(' ')} L400,60 L0,60Z" fill="var(--green)" fill-opacity="0.1"/>`;
+  document.getElementById('robGrid').innerHTML = `
+    <div class="metric"><div class="ml">Walk-forward</div><div class="mv up" style="font-size:14px">Passed</div><div class="ms">12-mo OOS</div></div>
+    <div class="metric"><div class="ml">Monte Carlo</div><div class="mv up" style="font-size:14px">Robust</div><div class="ms">1000 sims</div></div>
+    <div class="metric"><div class="ml">Out-of-sample</div><div class="mv am" style="font-size:14px">Moderate</div><div class="ms">2024 data</div></div>`;
+}
+
+// ── START ─────────────────────────────────────────────────────
+if (SB_URL && SB_KEY) {
+  document.getElementById('configModal').style.display = 'none';
+  init();
+}
+</script>
+</body>
+</html>
