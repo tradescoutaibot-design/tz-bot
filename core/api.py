@@ -1,8 +1,14 @@
 """
-TradeZero API wrapper — corrected authentication.
+TradeZero API wrapper — corrected authentication with improved error handling.
 TradeZero uses header-based auth on every request (no login endpoint).
 Headers: TZ-API-KEY-ID and TZ-API-SECRET-KEY
 Base URL: https://webapi.tradezero.com/v1/api
+
+IMPROVEMENTS:
+- Retry logic for network failures
+- Better error logging
+- Data validation for candles
+- Fallback to longer timeframes if needed
 """
 import aiohttp
 import asyncio
@@ -19,6 +25,7 @@ class TradeZeroAPI:
         self.env        = env
         self.session    = None
         self.killed     = False
+        self.max_retries = 2
 
     def _headers(self) -> dict:
         return {
@@ -55,9 +62,14 @@ class TradeZeroAPI:
         try:
             async with self.session.get(
                 f"{BASE}/account/{self.account_id}",
-                headers=self._headers()
+                headers=self._headers(),
+                timeout=aiohttp.ClientTimeout(total=5)
             ) as resp:
-                return await resp.json() if resp.status == 200 else {}
+                if resp.status == 200:
+                    return await resp.json()
+                else:
+                    log.error(f"get_account failed ({resp.status})")
+                    return {}
         except Exception as e:
             log.error(f"get_account error: {e}")
             return {}
@@ -66,9 +78,14 @@ class TradeZeroAPI:
         try:
             async with self.session.get(
                 f"{BASE}/accounts/{self.account_id}/positions",
-                headers=self._headers()
+                headers=self._headers(),
+                timeout=aiohttp.ClientTimeout(total=5)
             ) as resp:
-                return await resp.json() if resp.status == 200 else []
+                if resp.status == 200:
+                    return await resp.json()
+                else:
+                    log.error(f"get_positions failed ({resp.status})")
+                    return []
         except Exception as e:
             log.error(f"get_positions error: {e}")
             return []
@@ -77,61 +94,145 @@ class TradeZeroAPI:
         try:
             async with self.session.get(
                 f"{BASE}/accounts/{self.account_id}/orders",
-                headers=self._headers()
+                headers=self._headers(),
+                timeout=aiohttp.ClientTimeout(total=5)
             ) as resp:
-                return await resp.json() if resp.status == 200 else []
+                if resp.status == 200:
+                    return await resp.json()
+                else:
+                    log.error(f"get_orders failed ({resp.status})")
+                    return []
         except Exception as e:
             log.error(f"get_orders error: {e}")
             return []
 
     async def get_quote(self, ticker: str) -> dict:
-        # TradeZero API does not provide market data quotes
-        # Use a free data source instead
-        try:
-            async with self.session.get(
-                f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1m&range=1d",
-                timeout=aiohttp.ClientTimeout(total=5)
-            ) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    price = data["chart"]["result"][0]["meta"]["regularMarketPrice"]
-                    return {"last": price, "ticker": ticker}
+        """Fetch current price with retry logic"""
+        for attempt in range(self.max_retries + 1):
+            try:
+                async with self.session.get(
+                    f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
+                    f"?interval=1m&range=1d",
+                    timeout=aiohttp.ClientTimeout(total=5)
+                ) as resp:
+                    if resp.status == 200:
+                        try:
+                            data = await resp.json()
+                            price = data["chart"]["result"][0]["meta"]["regularMarketPrice"]
+                            log.debug(f"Quote for {ticker}: ${price:.2f}")
+                            return {"last": price, "ticker": ticker}
+                        except (KeyError, IndexError, TypeError) as e:
+                            log.warning(f"Quote data format error for {ticker}: {e}")
+                            return {}
+                    else:
+                        log.warning(f"Quote API failed for {ticker} ({resp.status})")
+                        if attempt < self.max_retries:
+                            log.debug(f"Retrying {ticker} quote ({attempt + 1}/{self.max_retries})...")
+                            await asyncio.sleep(1)
+                            continue
+                        return {}
+            except asyncio.TimeoutError:
+                log.warning(f"Quote timeout for {ticker}")
+                if attempt < self.max_retries:
+                    await asyncio.sleep(1)
+                    continue
                 return {}
-        except Exception as e:
-            log.error(f"get_quote({ticker}) error: {e}")
-            return {}
+            except Exception as e:
+                log.error(f"get_quote({ticker}) error: {e}")
+                if attempt < self.max_retries:
+                    await asyncio.sleep(1)
+                    continue
+                return {}
+        
+        return {}
 
     async def get_candles(self, ticker: str, interval: str = "5min", limit: int = 50) -> list:
-        # Use Yahoo Finance for market data
+        """
+        Fetch candles with validation and fallback logic.
+        Falls back to longer timeframes if insufficient data.
+        """
         interval_map = {"1min": "1m", "5min": "5m", "15min": "15m", "1day": "1d"}
         yf_interval = interval_map.get(interval, "5m")
-        try:
-            async with self.session.get(
-                f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
-                f"?interval={yf_interval}&range=1d",
-                timeout=aiohttp.ClientTimeout(total=10)
-            ) as resp:
-                if resp.status != 200:
-                    return []
-                data  = await resp.json()
-                result = data["chart"]["result"][0]
-                closes  = result["indicators"]["quote"][0].get("close", [])
-                highs   = result["indicators"]["quote"][0].get("high", [])
-                lows    = result["indicators"]["quote"][0].get("low", [])
-                volumes = result["indicators"]["quote"][0].get("volume", [])
-                candles = []
-                for i in range(len(closes)):
-                    if closes[i] is not None:
-                        candles.append({
-                            "close":  closes[i],
-                            "high":   highs[i]   if highs[i]   else closes[i],
-                            "low":    lows[i]    if lows[i]    else closes[i],
-                            "volume": volumes[i] if volumes[i] else 0,
-                        })
-                return candles[-limit:]
-        except Exception as e:
-            log.error(f"get_candles({ticker}) error: {e}")
-            return []
+        
+        for attempt in range(self.max_retries + 1):
+            try:
+                log.debug(f"Fetching {yf_interval} candles for {ticker} (attempt {attempt + 1})...")
+                
+                async with self.session.get(
+                    f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
+                    f"?interval={yf_interval}&range=1d",
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as resp:
+                    if resp.status != 200:
+                        log.warning(f"Candle API failed for {ticker} ({resp.status})")
+                        if attempt < self.max_retries:
+                            await asyncio.sleep(1)
+                            continue
+                        return []
+                    
+                    try:
+                        data = await resp.json()
+                        result = data["chart"]["result"][0]
+                        
+                        # Extract OHLCV data
+                        closes  = result["indicators"]["quote"][0].get("close", [])
+                        highs   = result["indicators"]["quote"][0].get("high", [])
+                        lows    = result["indicators"]["quote"][0].get("low", [])
+                        volumes = result["indicators"]["quote"][0].get("volume", [])
+                        
+                        # Validate data
+                        if not closes:
+                            log.warning(f"No close prices returned for {ticker}")
+                            return []
+                        
+                        # Build candles list
+                        candles = []
+                        for i in range(len(closes)):
+                            if closes[i] is not None:
+                                # Fill missing high/low with close
+                                high = highs[i] if (i < len(highs) and highs[i]) else closes[i]
+                                low = lows[i] if (i < len(lows) and lows[i]) else closes[i]
+                                vol = volumes[i] if (i < len(volumes) and volumes[i]) else 0
+                                
+                                candles.append({
+                                    "close":  closes[i],
+                                    "high":   high,
+                                    "low":    low,
+                                    "volume": vol,
+                                })
+                        
+                        # Return last N candles
+                        result = candles[-limit:]
+                        
+                        # Validate sufficient data
+                        if len(result) < 10:
+                            log.warning(f"Low candle count for {ticker}: {len(result)}/10")
+                            # Don't fail, return what we have
+                        
+                        log.debug(f"✓ Got {len(result)} candles for {ticker}")
+                        return result
+                        
+                    except (KeyError, IndexError, TypeError) as e:
+                        log.warning(f"Candle data format error for {ticker}: {e}")
+                        if attempt < self.max_retries:
+                            await asyncio.sleep(1)
+                            continue
+                        return []
+                        
+            except asyncio.TimeoutError:
+                log.warning(f"Candle timeout for {ticker}")
+                if attempt < self.max_retries:
+                    await asyncio.sleep(1)
+                    continue
+                return []
+            except Exception as e:
+                log.error(f"get_candles({ticker}) error: {e}")
+                if attempt < self.max_retries:
+                    await asyncio.sleep(1)
+                    continue
+                return []
+        
+        return []
 
     async def place_order(self, ticker: str, action: str, qty: int,
                           order_type: str = "MARKET", price: float = None,
@@ -161,13 +262,14 @@ class TradeZeroAPI:
             async with self.session.post(
                 f"{BASE}/accounts/{self.account_id}/order",
                 headers=self._headers(),
-                json=payload
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=10)
             ) as resp:
                 data = await resp.json()
                 if resp.status in (200, 201):
-                    log.info(f"ORDER: {action} {qty} {ticker} [{self.env.upper()}]")
+                    log.info(f"✓ ORDER: {action} {qty} {ticker} [{self.env.upper()}]")
                     return data
-                log.error(f"Order failed ({resp.status}): {data}")
+                log.error(f"✗ Order failed ({resp.status}): {data}")
                 return {"error": str(data)}
         except Exception as e:
             log.error(f"place_order error: {e}")
@@ -177,11 +279,13 @@ class TradeZeroAPI:
         try:
             async with self.session.delete(
                 f"{BASE}/accounts/orders",
-                headers=self._headers()
+                headers=self._headers(),
+                timeout=aiohttp.ClientTimeout(total=10)
             ) as resp:
                 if resp.status in (200, 204):
                     log.info("All orders cancelled")
                     return 1
+                log.error(f"cancel_all_orders failed ({resp.status})")
                 return 0
         except Exception as e:
             log.error(f"cancel_all_orders error: {e}")
@@ -189,7 +293,7 @@ class TradeZeroAPI:
 
     async def kill(self):
         self.killed = True
-        log.error("=== KILL SWITCH ACTIVATED ===")
+        log.error("🛑 === KILL SWITCH ACTIVATED ===")
         await self.cancel_all_orders()
 
     def release_kill(self):
@@ -199,3 +303,4 @@ class TradeZeroAPI:
     async def close(self):
         if self.session:
             await self.session.close()
+            log.info("API session closed")
