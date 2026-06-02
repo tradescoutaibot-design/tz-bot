@@ -1,7 +1,13 @@
 """
-TZ Trading Agent
+TZ Trading Agent (FIXED VERSION)
 The brain of the bot. Reads memory, generates signals, executes trades,
 and learns from every outcome to improve the next session.
+
+IMPROVEMENTS:
+- Added market holiday detection
+- Better signal generation logging
+- Earlier cutoff to catch EOD trades
+- More detailed error tracking
 """
 import asyncio
 from datetime import datetime, time as dtime
@@ -14,7 +20,19 @@ from core.learning import LearningEngine
 
 MARKET_OPEN  = dtime(9, 30)
 MARKET_CLOSE = dtime(16, 0)
-CUTOFF       = dtime(15, 45)   # No new entries after this
+CUTOFF       = dtime(15, 30)   # No new entries after this (was 15:45, moved earlier)
+
+# US Market Holidays (hardcoded to avoid dependency)
+US_HOLIDAYS = {
+    "2026-01-19",  # MLK Day
+    "2026-02-16",  # Presidents Day
+    "2026-03-27",  # Good Friday
+    "2026-05-25",  # Memorial Day
+    "2026-07-03",  # Independence Day (observed)
+    "2026-09-07",  # Labor Day
+    "2026-11-26",  # Thanksgiving
+    "2026-12-25",  # Christmas
+}
 
 
 class TradingAgent:
@@ -28,6 +46,24 @@ class TradingAgent:
         self.instruction = None    # set by run_from_prompt()
         self.learner = LearningEngine(memory=memory)
 
+    # ── Helper Methods ───────────────────────────────────────
+
+    def _is_trading_day(self) -> bool:
+        """Check if market should be open (not weekend, not holiday)"""
+        today = datetime.now()
+        weekday = today.weekday()
+        
+        # Check if weekend (Saturday=5, Sunday=6)
+        if weekday >= 5:
+            return False
+        
+        # Check if US market holiday
+        date_str = today.strftime("%Y-%m-%d")
+        if date_str in US_HOLIDAYS:
+            return False
+        
+        return True
+
     # ── Main Loop ────────────────────────────────────────────
 
     async def run_loop(self):
@@ -37,17 +73,29 @@ class TradingAgent:
 
         while not self.killed:
             now = datetime.now().time()
+            is_trading_day = self._is_trading_day()
 
-            if MARKET_OPEN <= now <= MARKET_CLOSE:
+            if is_trading_day and MARKET_OPEN <= now <= MARKET_CLOSE:
                 await self._session_tick()
             else:
-                if now < MARKET_OPEN:
+                if not is_trading_day:
+                    # Market closed (weekend/holiday)
+                    wait_msg = "Weekend or market holiday"
+                    log.info(f"{wait_msg} — waiting until next trading day...")
+                    await asyncio.sleep(3600)  # Check again in 1 hour
+                    continue
+                elif now < MARKET_OPEN:
+                    # Before market open
                     wait = (
                         datetime.combine(datetime.today(), MARKET_OPEN)
                         - datetime.now()
-                    ).seconds
-                    log.info(f"Market opens in {wait//60}m {wait%60}s — waiting...")
+                    ).total_seconds()
+                    wait_min = int(wait // 60)
+                    wait_sec = int(wait % 60)
+                    log.info(f"Market opens in {wait_min}m {wait_sec}s — waiting...")
+                    await asyncio.sleep(min(60, wait))  # Check every minute or before open
                 else:
+                    # After market close
                     log.info("Market closed. Running end-of-day learning...")
                     await self._end_of_day()
                     log.info("Waiting for tomorrow. Sleeping 60 min...")
@@ -60,6 +108,9 @@ class TradingAgent:
         """Called every minute during market hours."""
         if self.killed:
             return
+
+        now_time = datetime.now().time()
+        log.debug(f"Session tick at {now_time}")
 
         # Check daily loss limit
         max_loss = self.memory.get("max_daily_loss_pct", 3.0)
@@ -75,22 +126,32 @@ class TradingAgent:
         # Check trade count
         max_trades = self.memory.get("max_trades_per_day", 3)
         if self.trades_today >= max_trades:
+            log.debug(f"Max trades ({max_trades}) reached for today")
+            await self._monitor_positions()
             return   # silent — just monitor positions
 
         # No new entries after cutoff
-        if datetime.now().time() > CUTOFF:
+        if now_time > CUTOFF:
+            log.debug(f"Past cutoff time ({CUTOFF}), monitoring positions only")
             await self._monitor_positions()
             return
 
         # Generate signals
         strategy_name = self.memory.get("active_strategy", "SMA Crossover")
         watchlist = self.memory.get("watchlist", ["SPY", "AAPL", "TSLA"])
+        log.debug(f"Generating signals using {strategy_name} on {len(watchlist)} tickers")
         signals = await self._generate_signals(strategy_name, watchlist)
+
+        if signals:
+            log.info(f"Generated {len(signals)} signal(s)")
+        else:
+            log.debug(f"No signals generated from watchlist")
 
         for signal in signals:
             if self.killed:
                 break
             if self.trades_today >= max_trades:
+                log.info(f"Reached max trades ({max_trades}), stopping entry signals")
                 break
             if signal["action"] in ("BUY", "SHORT"):
                 await self._execute_signal(signal, balance)
@@ -114,15 +175,32 @@ class TradingAgent:
 
         for ticker in watchlist:
             if ticker in self.open_positions:
+                log.debug(f"Skipping {ticker} — already have open position")
                 continue
+            
+            log.debug(f"Fetching candles for {ticker}...")
             candles = await self.api.get_candles(ticker, interval="5min", limit=50)
+            
             if not candles:
+                log.warning(f"No candles returned for {ticker} — data fetch may have failed")
                 continue
+            
+            if len(candles) < 20:
+                log.warning(f"Insufficient candles for {ticker} ({len(candles)}/20)")
+                continue
+            
+            log.debug(f"Evaluating {ticker} ({len(candles)} candles)...")
             strat = StratClass(ticker=ticker, candles=candles, overrides=adjusted)
             sig = strat.evaluate()
+            
             if sig:
                 signals.append(sig)
-                log.info(f"Signal: {sig['action']} {ticker} | {sig['reason']} | confidence {sig['confidence']:.0%}")
+                log.info(f"✓ Signal: {sig['action']} {ticker} | {sig['reason']} | confidence {sig['confidence']:.0%}")
+            else:
+                log.debug(f"✗ No signal for {ticker}: strategy conditions not met")
+
+        if not signals:
+            log.info(f"No signals generated from {len(watchlist)} tickers")
 
         # Sort by confidence — take strongest first
         signals.sort(key=lambda s: s["confidence"], reverse=True)
@@ -139,8 +217,9 @@ class TradingAgent:
         stop_pct = self.memory.get("default_stop_loss_pct", 2.0) / 100
 
         quote = await self.api.get_quote(ticker)
-        price = float(quote.get("ask") or quote.get("last", 100))
+        price = float(quote.get("ask") or quote.get("last", 0))
         if price == 0:
+            log.error(f"Could not get price for {ticker}")
             return
 
         qty = max(1, int((account_balance * pos_pct) / price))
@@ -167,9 +246,11 @@ class TradingAgent:
                 "order_id": result.get("orderId") or result.get("id")
             }
             log.info(
-                f"EXECUTED: {action} {qty} {ticker} @ ${price:.2f} | "
+                f"✓ EXECUTED: {action} {qty} {ticker} @ ${price:.2f} | "
                 f"stop ${stop_price:.2f} | target ${target_price:.2f}"
             )
+        else:
+            log.error(f"✗ Order failed for {ticker}: {result.get('error')}")
 
     # ── Position Monitor ──────────────────────────────────────
 
@@ -181,6 +262,7 @@ class TradingAgent:
             quote = await self.api.get_quote(ticker)
             price = float(quote.get("last") or quote.get("bid", 0))
             if not price:
+                log.warning(f"Could not get price for {ticker} — skipping exit check")
                 continue
 
             hit_stop   = price <= pos["stop"]
@@ -210,7 +292,7 @@ class TradingAgent:
                     "exit_reason": reason
                 }
                 note = self.memory.log_trade(trade_record)
-                log.info(f"{reason}: {ticker} @ ${price:.2f} | P&L ${pnl:+.2f} ({pnl_pct:+.1f}%)")
+                log.info(f"✓ {reason}: {ticker} @ ${price:.2f} | P&L ${pnl:+.2f} ({pnl_pct:+.1f}%)")
                 del self.open_positions[ticker]
 
     # ── End-of-Day Learning ───────────────────────────────────
@@ -226,7 +308,7 @@ class TradingAgent:
         today = [t for t in history if t.get("logged_at", "").startswith(today_str)]
 
         if not today:
-            log.info("No trades today — nothing to learn from")
+            log.info("ℹ No trades today — nothing to learn from")
             return
 
         wins = [t for t in today if t.get("pnl", 0) > 0]
@@ -247,16 +329,16 @@ class TradingAgent:
             current_rsi = adj.get("rsi_entry", 10)
             adj["rsi_entry"] = max(5, current_rsi - 2)
             learned["adjusted_thresholds"] = adj
-            log.info(f"Low win rate — tightened RSI entry to {adj['rsi_entry']}")
+            log.info(f"📊 Low win rate — tightened RSI entry to {adj['rsi_entry']}")
         elif win_rate > 70:
             adj = learned.get("adjusted_thresholds", {})
             current_rsi = adj.get("rsi_entry", 10)
             adj["rsi_entry"] = min(15, current_rsi + 1)
             learned["adjusted_thresholds"] = adj
-            log.info(f"High win rate — relaxed RSI entry to {adj['rsi_entry']}")
+            log.info(f"📊 High win rate — relaxed RSI entry to {adj['rsi_entry']}")
 
         self.memory.set("learned", learned)
-        log.info(f"End-of-day learning complete: {summary}")
+        log.info(f"✓ End-of-day learning complete: {summary}")
 
         # Reset daily counters
         self.trades_today = 0
@@ -267,7 +349,7 @@ class TradingAgent:
     async def emergency_stop(self):
         """Immediately halt all activity."""
         self.killed = True
-        log.error("=== EMERGENCY STOP ===")
+        log.error("🛑 === EMERGENCY STOP ===")
         await self.api.kill()
         self.open_positions.clear()
         log.error("All positions cleared from tracking. Bot halted.")
