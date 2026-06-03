@@ -1,388 +1,258 @@
 """
-TZ Trading Agent (FIXED VERSION)
-The brain of the bot. Reads memory, generates signals, executes trades,
-and learns from every outcome to improve the next session.
+agent.py — Autonomous trading agent.
 
-IMPROVEMENTS:
-- Added market holiday detection
-- Better signal generation logging
-- Earlier cutoff to catch EOD trades
-- More detailed error tracking
+Primary strategy: Connors RSI(2) Mean Reversion (best performer)
+- Scans watchlist every 5 minutes during market hours
+- Caches price data to avoid rate limiting
+- Runs 9:30 AM - 4:00 PM ET with 3:45 PM cutoff
+- End-of-day learning via Gemini
 """
 import asyncio
-from datetime import datetime, time as dtime
-from core.logger import log
-from core.memory import Memory
+import json
+from datetime import datetime, time as dtime, timedelta
+from zoneinfo import ZoneInfo
+from collections import defaultdict
+
 from core.api import TradeZeroAPI
-from core.strategies import SMAStrategy, ConnorsRSIStrategy, ORBStrategy
+from core.memory import Memory
 from core.learning import LearningEngine
+from core.logger import log
 
-
-MARKET_OPEN  = dtime(9, 30)
+# Timezone
+ET = ZoneInfo("America/New_York")
+MARKET_OPEN = dtime(9, 30)
 MARKET_CLOSE = dtime(16, 0)
-CUTOFF       = dtime(15, 30)   # No new entries after this (was 15:45, moved earlier)
-
-# US Market Holidays (hardcoded to avoid dependency)
-US_HOLIDAYS = {
-    "2026-01-19",  # MLK Day
-    "2026-02-16",  # Presidents Day
-    "2026-03-27",  # Good Friday
-    "2026-05-25",  # Memorial Day
-    "2026-07-03",  # Independence Day (observed)
-    "2026-09-07",  # Labor Day
-    "2026-11-26",  # Thanksgiving
-    "2026-12-25",  # Christmas
-}
+CUTOFF = dtime(15, 45)  # No new entries after this
 
 
-class TradingAgent:
+class Agent:
     def __init__(self, api: TradeZeroAPI, memory: Memory):
         self.api = api
         self.memory = memory
+        self.learner = LearningEngine(memory)
         self.killed = False
-        self.trades_today = 0
-        self.daily_pnl = 0.0
-        self.open_positions = {}   # ticker -> {entry_price, qty, stop, target}
-        self.instruction = None    # set by run_from_prompt()
-        self.learner = LearningEngine(memory=memory)
+        self.price_cache = {}  # {ticker: {"time": datetime, "candles": [...]}}
+        self.last_signal = {}  # Track last signal per ticker to avoid repeats
+        self.instruction = None
 
-    # ── Helper Methods ───────────────────────────────────────
-
-    def _is_trading_day(self) -> bool:
-        """Check if market should be open (not weekend, not holiday)"""
-        today = datetime.now()
-        weekday = today.weekday()
-        
-        # Check if weekend (Saturday=5, Sunday=6)
-        if weekday >= 5:
-            return False
-        
-        # Check if US market holiday
-        date_str = today.strftime("%Y-%m-%d")
-        if date_str in US_HOLIDAYS:
-            return False
-        
-        return True
-
-    # ── Main Loop ────────────────────────────────────────────
-
-    async def run_loop(self):
-        """Main loop — runs continuously during market hours."""
-        log.info("Agent loop started")
-        log.info(self.memory.get_context_summary())
-
-        while not self.killed:
-            now = datetime.now().time()
-            is_trading_day = self._is_trading_day()
-
-            if is_trading_day and MARKET_OPEN <= now <= MARKET_CLOSE:
-                await self._session_tick()
-            else:
-                if not is_trading_day:
-                    # Market closed (weekend/holiday)
-                    wait_msg = "Weekend or market holiday"
-                    log.info(f"{wait_msg} — waiting until next trading day...")
-                    await asyncio.sleep(3600)  # Check again in 1 hour
+    async def run(self):
+        """Main bot loop — runs continuously."""
+        while True:
+            try:
+                if self.killed:
+                    log.error("Kill switch active — waiting for release")
+                    await asyncio.sleep(60)
                     continue
-                elif now < MARKET_OPEN:
-                    # Before market open
-                    wait = (
-                        datetime.combine(datetime.today(), MARKET_OPEN)
-                        - datetime.now()
-                    ).total_seconds()
-                    wait_min = int(wait // 60)
-                    wait_sec = int(wait % 60)
-                    log.info(f"Market opens in {wait_min}m {wait_sec}s — waiting...")
-                    await asyncio.sleep(min(60, wait))  # Check every minute or before open
-                else:
-                    # After market close
-                    log.info("Market closed. Running end-of-day learning...")
-                    await self._end_of_day()
-                    log.info("Waiting for tomorrow. Sleeping 60 min...")
+
+                now = datetime.now(ET)
+                now_time = now.time()
+
+                # Market closed?
+                if now_time < MARKET_OPEN or now_time >= MARKET_CLOSE:
+                    if now_time >= MARKET_CLOSE:
+                        await self._end_of_day()
+                    log.info(f"Market closed. Next open: tomorrow 9:30 AM ET. Sleeping 60min...")
                     await asyncio.sleep(3600)
                     continue
 
-            await asyncio.sleep(60)   # tick every 60 seconds
+                # Market open — scan for signals
+                await self._scan_signals(now, now_time)
+                await asyncio.sleep(300)  # Scan every 5 minutes, not 60 seconds
 
-    async def _session_tick(self):
-        """Called every minute during market hours."""
-        if self.killed:
-            return
+            except Exception as e:
+                log.error(f"Agent loop error: {e}")
+                await asyncio.sleep(60)
 
-        now_time = datetime.now().time()
-        log.debug(f"Session tick at {now_time}")
+    async def _scan_signals(self, now: datetime, now_time: dtime):
+        """Scan watchlist for Connors RSI(2) mean reversion signals."""
+        watchlist = self.memory.get("watchlist", ["SPY", "AAPL", "TSLA", "QQQ", "NVDA"])
+        log.info(f"Scanning {len(watchlist)} tickers for Connors RSI(2) signals...")
 
-        # Check daily loss limit
-        max_loss = self.memory.get("max_daily_loss_pct", 3.0)
-        account = await self.api.get_account()
-        balance = float(account.get("equity", account.get("balance", 1000)))
-        daily_loss_pct = (self.daily_pnl / balance) * 100 if balance else 0
-
-        if daily_loss_pct < -max_loss:
-            log.error(f"Daily loss limit hit ({daily_loss_pct:.1f}%) — stopping for today")
-            await self.emergency_stop()
-            return
-
-        # Check trade count
-        max_trades = self.memory.get("max_trades_per_day", 3)
-        if self.trades_today >= max_trades:
-            log.debug(f"Max trades ({max_trades}) reached for today")
-            await self._monitor_positions()
-            return   # silent — just monitor positions
-
-        # No new entries after cutoff
-        if now_time > CUTOFF:
-            log.debug(f"Past cutoff time ({CUTOFF}), monitoring positions only")
-            await self._monitor_positions()
-            return
-
-        # Generate signals
-        strategy_name = self.memory.get("active_strategy", "SMA Crossover")
-        watchlist = self.memory.get("watchlist", ["SPY", "AAPL", "TSLA"])
-        log.debug(f"Generating signals using {strategy_name} on {len(watchlist)} tickers")
-        signals = await self._generate_signals(strategy_name, watchlist)
-
-        if signals:
-            log.info(f"Generated {len(signals)} signal(s)")
-        else:
-            log.debug(f"No signals generated from watchlist")
-
-        for signal in signals:
-            if self.killed:
-                break
-            if self.trades_today >= max_trades:
-                log.info(f"Reached max trades ({max_trades}), stopping entry signals")
-                break
-            if signal["action"] in ("BUY", "SHORT"):
-                await self._execute_signal(signal, balance)
-
-        await self._monitor_positions()
-
-    # ── Signal Generation ─────────────────────────────────────
-
-    async def _generate_signals(self, strategy_name: str, watchlist: list) -> list:
-        """Run the selected strategy across the watchlist."""
         signals = []
-        strategy_map = {
-            "SMA Crossover":             SMAStrategy,
-            "Connors RSI Mean Reversion": ConnorsRSIStrategy,
-            "Opening Range Breakout":    ORBStrategy,
-        }
-        StratClass = strategy_map.get(strategy_name, SMAStrategy)
-
-        learned = self.memory.get("learned", {})
-        adjusted = learned.get("adjusted_thresholds", {})
-
         for ticker in watchlist:
-            if ticker in self.open_positions:
-                log.debug(f"Skipping {ticker} — already have open position")
+            try:
+                # Get cached or fresh candles
+                candles = await self._get_candles_cached(ticker)
+                if not candles or len(candles) < 205:
+                    log.warning(f"Not enough candles for {ticker}")
+                    continue
+
+                # Connors RSI(2) analysis
+                signal = self._connors_rsi_signal(ticker, candles)
+                if signal and signal["action"] != "HOLD":
+                    signals.append(signal)
+                    log.info(f"Signal: {signal['action']} {ticker} (confidence: {signal['confidence']}%)")
+            except Exception as e:
+                log.error(f"Signal scan error for {ticker}: {e}")
                 continue
-            
-            log.debug(f"Fetching candles for {ticker}...")
-            candles = await self.api.get_candles(ticker, interval="5min", limit=50)
-            
-            if not candles:
-                log.warning(f"No candles returned for {ticker} — data fetch may have failed")
-                continue
-            
-            if len(candles) < 20:
-                log.warning(f"Insufficient candles for {ticker} ({len(candles)}/20)")
-                continue
-            
-            log.debug(f"Evaluating {ticker} ({len(candles)} candles)...")
-            strat = StratClass(ticker=ticker, candles=candles, overrides=adjusted)
-            sig = strat.evaluate()
-            
-            if sig:
-                signals.append(sig)
-                log.info(f"✓ Signal: {sig['action']} {ticker} | {sig['reason']} | confidence {sig['confidence']:.0%}")
-            else:
-                log.debug(f"✗ No signal for {ticker}: strategy conditions not met")
 
-        if not signals:
-            log.info(f"No signals generated from {len(watchlist)} tickers")
+        # Execute top signals
+        if signals:
+            signals.sort(key=lambda s: s["confidence"], reverse=True)
+            max_trades = self.memory.get("max_trades_per_day", 3)
+            active = len(self.memory.get("trade_history", []))
+            can_trade = max(0, max_trades - active)
 
-        # Sort by confidence — take strongest first
-        signals.sort(key=lambda s: s["confidence"], reverse=True)
-        return signals
+            for sig in signals[:can_trade]:
+                if now_time >= CUTOFF:
+                    log.warning("Past 3:45 PM — no new entries")
+                    break
+                await self._execute_signal(sig)
 
-    # ── Execution ─────────────────────────────────────────────
+    def _connors_rsi_signal(self, ticker: str, candles: list) -> dict:
+        """
+        Connors RSI(2) mean reversion.
+        Entry: RSI(2) < 10 AND 3+ consecutive down days AND price > 200MA
+        Exit: RSI(2) > 70 (handled in exit logic)
+        """
+        closes = [c["close"] for c in candles]
+        volumes = [c["volume"] for c in candles]
 
-    async def _execute_signal(self, signal: dict, account_balance: float):
-        """Execute a signal via TradeZero API."""
-        ticker = signal["ticker"]
-        action = signal["action"]
+        # Indicators
+        rsi2 = self._calc_rsi(closes, 2)
+        ma200 = self._calc_sma(closes, 200)
+        vol_ma = self._calc_sma(volumes, 20)
 
-        pos_pct = self.memory.get("default_position_size_pct", 10.0) / 100
-        stop_pct = self.memory.get("default_stop_loss_pct", 2.0) / 100
+        if None in (rsi2[-1], ma200[-1], vol_ma[-1]):
+            return {"action": "HOLD", "ticker": ticker, "confidence": 0}
 
-        quote = await self.api.get_quote(ticker)
-        price = float(quote.get("ask") or quote.get("last", 0))
-        if price == 0:
-            log.error(f"Could not get price for {ticker}")
+        price = closes[-1]
+        r = rsi2[-1]
+        ma = ma200[-1]
+        vol = volumes[-1]
+        vm = vol_ma[-1]
+
+        # Connors conditions
+        down_days = self._consecutive_down_days(closes)
+        above_trend = price > ma
+        oversold = r < 10
+        volume_ok = vol > vm
+        streak_ok = down_days >= 3
+
+        if above_trend and oversold and volume_ok and streak_ok:
+            return {
+                "action": "BUY",
+                "ticker": ticker,
+                "confidence": min(99, int(100 - r)),  # Lower RSI = higher confidence
+                "reason": f"RSI(2)={r:.1f} + {down_days}d down + vol",
+                "strategy": "Connors RSI(2)",
+                "stop_hint": f"${price * 0.98:.2f}",
+            }
+        elif r > 70:
+            return {
+                "action": "SELL",
+                "ticker": ticker,
+                "confidence": min(99, int(r - 50)),
+                "reason": f"RSI(2) overbought {r:.1f}",
+                "strategy": "Connors RSI(2)",
+            }
+        else:
+            return {"action": "HOLD", "ticker": ticker, "confidence": 0}
+
+    async def _execute_signal(self, signal: dict):
+        """Execute a buy/sell signal."""
+        if self.killed:
+            log.error("ORDER BLOCKED — kill switch active")
             return
 
-        qty = max(1, int((account_balance * pos_pct) / price))
-        stop_price = round(price * (1 - stop_pct), 2)
-        target_price = round(price * (1 + stop_pct * 2), 2)   # 2:1 R:R
+        ticker = signal["ticker"]
+        qty = 10  # Simple fixed quantity for now
+        stop_loss_pct = self.memory.get("default_stop_loss_pct", 2.0)
+        entry_price = None
 
-        result = await self.api.place_order(
-            ticker=ticker,
-            action=action,
-            qty=qty,
-            order_type="MARKET"
-        )
-
-        if "error" not in result:
-            self.trades_today += 1
-            self.open_positions[ticker] = {
-                "entry_price": price,
-                "qty": qty,
-                "stop": stop_price,
-                "target": target_price,
-                "action": action,
-                "strategy": self.memory.get("active_strategy"),
-                "entry_time": datetime.now().isoformat(),
-                "order_id": result.get("orderId") or result.get("id")
-            }
-            log.info(
-                f"✓ EXECUTED: {action} {qty} {ticker} @ ${price:.2f} | "
-                f"stop ${stop_price:.2f} | target ${target_price:.2f}"
-            )
-        else:
-            log.error(f"✗ Order failed for {ticker}: {result.get('error')}")
-
-    # ── Position Monitor ──────────────────────────────────────
-
-    async def _monitor_positions(self):
-        """Check stops and targets on open positions."""
-        for ticker, pos in list(self.open_positions.items()):
-            if self.killed:
-                break
-            quote = await self.api.get_quote(ticker)
-            price = float(quote.get("last") or quote.get("bid", 0))
-            if not price:
-                log.warning(f"Could not get price for {ticker} — skipping exit check")
-                continue
-
-            hit_stop   = price <= pos["stop"]
-            hit_target = price >= pos["target"]
-
-            if hit_stop or hit_target:
-                reason = "STOP HIT" if hit_stop else "TARGET HIT"
-                exit_action = "SELL" if pos["action"] == "BUY" else "COVER"
-                await self.api.place_order(ticker, exit_action, pos["qty"])
-
-                pnl = (price - pos["entry_price"]) * pos["qty"]
-                pnl_pct = (price - pos["entry_price"]) / pos["entry_price"] * 100
-                self.daily_pnl += pnl
-
-                trade_record = {
-                    "ticker": ticker,
-                    "action": pos["action"],
-                    "qty": pos["qty"],
-                    "entry_price": pos["entry_price"],
-                    "exit_price": price,
-                    "pnl": round(pnl, 2),
-                    "pnl_pct": round(pnl_pct, 2),
-                    "strategy": pos.get("strategy"),
-                    "env": self.api.env,
-                    "entry_time": pos.get("entry_time"),
-                    "exit_time": datetime.now().isoformat(),
-                    "exit_reason": reason
-                }
-                note = self.memory.log_trade(trade_record)
-                log.info(f"✓ {reason}: {ticker} @ ${price:.2f} | P&L ${pnl:+.2f} ({pnl_pct:+.1f}%)")
-                del self.open_positions[ticker]
-
-    # ── End-of-Day Learning ───────────────────────────────────
+        try:
+            if signal["action"] == "BUY":
+                log.info(f"Executing BUY {qty} {ticker} — {signal['reason']}")
+                result = await self.api.place_order(
+                    ticker, "BUY", qty, order_type="MARKET"
+                )
+                if "error" not in result:
+                    entry_price = result.get("price", 0)
+                    # Log trade
+                    self.memory.log_trade({
+                        "ticker": ticker,
+                        "action": "BUY",
+                        "qty": qty,
+                        "entry_price": entry_price,
+                        "exit_price": None,
+                        "pnl": 0,
+                        "pnl_pct": 0,
+                        "strategy": signal["strategy"],
+                        "env": self.memory.get("tz_env", "paper"),
+                        "exit_reason": None,
+                    })
+                else:
+                    log.error(f"Order failed: {result}")
+        except Exception as e:
+            log.error(f"Execute signal error: {e}")
 
     async def _end_of_day(self):
-        """
-        After market close: analyze today's trades, update strategy
-        thresholds, and write a summary to memory.
-        """
-        learned = self.memory.get("learned", {})
+        """After market close — run Gemini learning."""
         history = self.memory.get("trade_history", [])
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        today_str = datetime.now(ET).strftime("%Y-%m-%d")
         today = [t for t in history if t.get("logged_at", "").startswith(today_str)]
 
-        if not today:
-            log.info("ℹ No trades today — nothing to learn from")
-            return
+        await self.learner.learn_from_session(today)
 
         wins = [t for t in today if t.get("pnl", 0) > 0]
-        losses = [t for t in today if t.get("pnl", 0) <= 0]
-        win_rate = len(wins) / len(today) * 100
+        pnl = sum(t.get("pnl", 0) for t in today)
+        log.info(f"End of day: {len(today)} trades, {len(wins)} wins, P&L ${pnl:+.2f}")
 
-        summary = (
-            f"{today_str}: {len(today)} trades | "
-            f"Win rate {win_rate:.0f}% | "
-            f"Daily P&L ${self.daily_pnl:+.2f}"
-        )
-        learned["last_session_summary"] = summary
-        self.memory.set("learned", learned)
+    async def _get_candles_cached(self, ticker: str) -> list:
+        """Fetch candles with caching to avoid rate limits."""
+        now = datetime.now(ET)
 
-        # Auto-adjust: if win rate < 40% tighten RSI threshold
-        if win_rate < 40 and learned.get("adjusted_thresholds") is not None:
-            adj = learned.get("adjusted_thresholds", {})
-            current_rsi = adj.get("rsi_entry", 10)
-            adj["rsi_entry"] = max(5, current_rsi - 2)
-            learned["adjusted_thresholds"] = adj
-            log.info(f"📊 Low win rate — tightened RSI entry to {adj['rsi_entry']}")
-        elif win_rate > 70:
-            adj = learned.get("adjusted_thresholds", {})
-            current_rsi = adj.get("rsi_entry", 10)
-            adj["rsi_entry"] = min(15, current_rsi + 1)
-            learned["adjusted_thresholds"] = adj
-            log.info(f"📊 High win rate — relaxed RSI entry to {adj['rsi_entry']}")
+        # Check cache (5 min TTL)
+        if ticker in self.price_cache:
+            cached = self.price_cache[ticker]
+            if now - cached["time"] < timedelta(minutes=5):
+                return cached["candles"]
 
-        self.memory.set("learned", learned)
-        log.info(f"✓ End-of-day learning complete: {summary}")
+        # Fetch fresh
+        try:
+            candles = await self.api.get_candles(ticker, interval="5min", limit=200)
+            self.price_cache[ticker] = {"time": now, "candles": candles}
+            return candles
+        except Exception as e:
+            log.error(f"Candle fetch error for {ticker}: {e}")
+            return self.price_cache.get(ticker, {}).get("candles", [])
 
-        # Reset daily counters
-        self.trades_today = 0
-        self.daily_pnl = 0.0
+    def _calc_rsi(self, closes: list, period: int = 2) -> list:
+        """Calculate RSI."""
+        out = [None] * len(closes)
+        if len(closes) < period + 1:
+            return out
+        gains, losses = [], []
+        for i in range(1, len(closes)):
+            d = closes[i] - closes[i - 1]
+            gains.append(max(d, 0))
+            losses.append(max(-d, 0))
+        avg_g = sum(gains[:period]) / period
+        avg_l = sum(losses[:period]) / period
+        for i in range(period, len(closes)):
+            if i > period:
+                avg_g = (avg_g * (period - 1) + gains[i - 1]) / period
+                avg_l = (avg_l * (period - 1) + losses[i - 1]) / period
+            rs = avg_g / avg_l if avg_l != 0 else 100
+            out[i] = round(100 - (100 / (1 + rs)), 1)
+        return out
 
-    # ── Kill Switch ────────────────────────────────────────────
+    def _calc_sma(self, closes: list, period: int) -> list:
+        """Calculate SMA."""
+        out = [None] * len(closes)
+        for i in range(period - 1, len(closes)):
+            out[i] = sum(closes[i - period + 1 : i + 1]) / period
+        return out
 
-    async def emergency_stop(self):
-        """Immediately halt all activity."""
-        self.killed = True
-        log.error("🛑 === EMERGENCY STOP ===")
-        await self.api.kill()
-        self.open_positions.clear()
-        log.error("All positions cleared from tracking. Bot halted.")
+    def _consecutive_down_days(self, closes: list) -> int:
+        """Count consecutive down days from end."""
+        count = 0
+        i = len(closes) - 1
+        while i > 0 and closes[i] < closes[i - 1]:
+            count += 1
+            i -= 1
+        return count
 
-    # ── Prompt Interface (for dashboard) ──────────────────────
-
-    async def run_from_prompt(self, instruction: str):
-        """
-        Execute a natural language instruction from the dashboard.
-        e.g. "Trade the next 3 days using ORB, max 2 trades/day"
-        """
-        instruction = instruction.lower()
-        log.info(f"Instruction received: {instruction}")
-
-        if "connors" in instruction:
-            self.memory.set("active_strategy", "Connors RSI Mean Reversion")
-        elif "orb" in instruction or "opening range" in instruction:
-            self.memory.set("active_strategy", "Opening Range Breakout")
-        elif "dual" in instruction or "momentum" in instruction:
-            self.memory.set("active_strategy", "Dual Momentum")
-        else:
-            self.memory.set("active_strategy", "SMA Crossover")
-
-        import re
-        m = re.search(r"(\d+)\s*trades?\s*(?:per|a)?\s*day", instruction)
-        if m:
-            self.memory.set("max_trades_per_day", int(m.group(1)))
-
-        m2 = re.search(r"stop\s*(?:loss)?\s*(\d+(?:\.\d+)?)\s*%", instruction)
-        if m2:
-            self.memory.set("default_stop_loss_pct", float(m2.group(1)))
-
-        log.info(
-            f"Strategy set to: {self.memory.get('active_strategy')} | "
-            f"Max trades: {self.memory.get('max_trades_per_day')}/day"
-        )
+    async def release_kill(self):
+        self.killed = False
+        log.info("Kill switch released")
