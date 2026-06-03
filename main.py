@@ -5,7 +5,7 @@ Run: python main.py
 import asyncio
 import signal
 import sys
-from core.agent import TradingAgent
+from core.agent import Agent
 from core.memory import Memory
 from core.api import TradeZeroAPI
 
@@ -38,7 +38,7 @@ async def main():
     print(f"[OK] Account: {api.account_id}")
 
     # Start agent
-    agent = TradingAgent(api=api, memory=memory)
+    agent = Agent(api=api, memory=memory)
 
     # Graceful kill switch (Ctrl+C or SIGTERM)
     def kill_handler(sig, frame):
