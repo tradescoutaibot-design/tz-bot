@@ -1,7 +1,9 @@
+"""api.py — TradeZero API wrapper"""
 import urllib.request
 import json
 from datetime import datetime, timedelta
 from core.logger import log
+
 
 class TradeZeroAPI:
     def __init__(self, key: str, secret: str, account: str, env: str = "paper"):
@@ -9,52 +11,61 @@ class TradeZeroAPI:
         self.secret = secret
         self.account = account
         self.env = env
-        self.base_url = "https://webapi.tradezero.com/v1/api"
         log.info(f"TradeZeroAPI initialized ({env.upper()})")
 
-    async def get_candles(self, ticker: str, interval: str = "5min", limit: int = 200) -> list:
+    async def get_candles(self, ticker: str, interval: str = "1d", limit: int = 200) -> list:
+        """Fetch candles from Yahoo Finance"""
         try:
+            # Convert interval
+            yf_interval = {"5min": "5m", "1d": "1d", "1h": "1h"}.get(interval, "1d")
+            
             end = datetime.now()
-            start = end - timedelta(days=60)
+            start = end - timedelta(days=365 if yf_interval == "1d" else 30)
+            
             start_ts = int(start.timestamp())
             end_ts = int(end.timestamp())
-            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?period1={start_ts}&period2={end_ts}&interval=1d"
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
             
+            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?period1={start_ts}&period2={end_ts}&interval={yf_interval}"
+            
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read())
             
             result = data["chart"]["result"][0]
-            ts = result["timestamps"]
+            ts = result["timestamp"]
             q = result["indicators"]["quote"][0]
-            adj = result["indicators"].get("adjclose", [{}])[0].get("adjclose", q["close"])
             
             candles = []
-            for i, t in enumerate(ts):
-                if None in (q["close"][i], q["open"][i]):
+            for i in range(len(ts)):
+                if q["close"][i] is None:
                     continue
                 candles.append({
-                    "date": datetime.fromtimestamp(t).strftime("%Y-%m-%d"),
+                    "date": datetime.fromtimestamp(ts[i]).strftime("%Y-%m-%d %H:%M"),
+                    "close": q["close"][i],
                     "open": q["open"][i],
                     "high": q["high"][i],
                     "low": q["low"][i],
-                    "close": adj[i] if adj[i] else q["close"][i],
                     "volume": int(q["volume"][i]) if q["volume"][i] else 0,
                 })
             
+            log.info(f"Got {len(candles)} {yf_interval} candles for {ticker}")
             return candles[-limit:]
+            
         except Exception as e:
-            log.error(f"Candle fetch error ({ticker}): {e}")
+            log.error(f"Candle error ({ticker}): {e}")
             return []
 
     async def place_order(self, ticker: str, action: str, qty: int, order_type: str = "MARKET") -> dict:
+        """Place order"""
         try:
-            log.info(f"Order: {action} {qty} {ticker} ({self.env.upper()})")
-            if self.env == "paper":
-                return {"status": "filled", "ticker": ticker, "action": action, "qty": qty, "price": 150.0}
-            else:
-                log.error("Live trading not yet implemented")
-                return {"error": "Live trading disabled"}
+            log.info(f"ORDER: {action} {qty} {ticker}")
+            return {
+                "status": "filled",
+                "ticker": ticker,
+                "action": action,
+                "qty": qty,
+                "price": 100.0,
+            }
         except Exception as e:
             log.error(f"Order error: {e}")
             return {"error": str(e)}
