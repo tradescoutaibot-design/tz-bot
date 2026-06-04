@@ -1,3 +1,6 @@
+"""
+main.py — Entry point for TZ autonomous trading bot.
+"""
 import asyncio
 import os
 import sys
@@ -11,15 +14,19 @@ from core.logger import log
 
 ET = ZoneInfo("America/New_York")
 
+
 async def main():
+    """Main entry point."""
     log.info("=" * 70)
     log.info("TZ AUTONOMOUS TRADING BOT — STARTING UP")
     log.info("=" * 70)
     log.info(f"Start time: {datetime.now(ET).strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
+    # Get environment
     tz_env = os.getenv("TZ_ENV", "paper").lower()
     log.info(f"Environment: {tz_env.upper()}")
 
+    # Get credentials
     key = os.getenv("TZ_API_KEY", "").strip()
     secret = os.getenv("TZ_API_SECRET", "").strip()
     account = os.getenv("TZ_ACCOUNT_ID", "").strip()
@@ -28,6 +35,7 @@ async def main():
         log.error("Missing credentials: TZ_API_KEY, TZ_API_SECRET, TZ_ACCOUNT_ID")
         sys.exit(1)
 
+    # Initialize memory
     try:
         memory = Memory()
         log.info("✓ Memory initialized")
@@ -35,6 +43,7 @@ async def main():
         log.error(f"Memory init failed: {e}")
         sys.exit(1)
 
+    # Initialize API
     try:
         api = TradeZeroAPI(key=key, secret=secret, account=account, env=tz_env)
         log.info(f"✓ TradeZero API connected")
@@ -42,6 +51,7 @@ async def main():
         log.error(f"API init failed: {e}")
         sys.exit(1)
 
+    # Initialize agent
     try:
         agent = Agent(api, memory)
         log.info("✓ Agent initialized")
@@ -53,6 +63,7 @@ async def main():
     log.info("STARTING AGENT LOOP")
     log.info("-" * 70)
 
+    # Run agent
     try:
         await agent.run()
     except KeyboardInterrupt:
@@ -63,6 +74,7 @@ async def main():
         import traceback
         traceback.print_exc()
         sys.exit(1)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
